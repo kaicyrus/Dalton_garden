@@ -1,0 +1,2436 @@
+#include "spherebalancetool.h"
+
+#include <qmessagebox.h>
+#include <QFileInfo>
+#include <QSettings>
+#include <QDebug>
+#include <QElapsedTimer>
+#include <QTime>
+#include <QSerialPort>
+#include <corecrt_math_defines.h>
+
+//#include "serialportcommunication/serialcommunication.h"
+
+#define ESCtMaxCardNum 32
+/*Global*/
+U16 gESCExistCards = 0;
+U16 gESCCardNo, gpESCCardNoList[ESCtMaxCardNum] = { 0 };
+U16 gNodeID = 0, gSlotID = 0;
+U16 gNodeID2 = 0;
+I32 gModeOri[2] = { 0 }, gModeLength[2] = { 0 };
+U16 gAverageMode[7] = { 0 };
+U32 gRevisionNo;
+/////////////////////////////////////////////////////////////////////////////
+
+static int sitstand_est_seconds = 10;
+
+static int step_est_seconds = 60;
+
+// 计算校验值
+uint8_t CaliSum(unsigned char* data, uint32_t len)
+{
+	uint32_t i;
+	uint8_t ucCheck = 0;
+	for (i = 0; i < len; i++) ucCheck += data[i];
+	return ucCheck;
+}
+
+
+// 获取新的传感器数据缓存
+// 查看数据缓冲区中的数据是否可以被3D传感器处理函数处理,第二代版本
+int Proc3DSensorV2Data(unsigned char* recvBuf, int recvLen, void* lpUser)
+{
+	int retLen = 0;
+	if (recvBuf == NULL || recvLen <= 0) {
+		return retLen;
+	}
+
+	int n = recvLen;
+	int ret = 0;
+
+	SphereBalanceTool* pThis = (SphereBalanceTool*)lpUser;
+	static int timestamp = 0;
+
+	const int step = 11;
+	if (n > 0) {
+		try {
+			for (int i = 0;i < n;) {
+				if (n - i >= 11) {
+					if (recvBuf[i] != 0x55) {
+						i++;
+// 						if (i % 500 == 0) {
+// 							Sleep(2);
+// 						}
+					}
+					else {
+						if (recvBuf[i + 1] == 0x53) {
+							uint8_t ucSum;
+
+							// 计算SUM值
+							ucSum = CaliSum(&(recvBuf[i]), 10);
+							if (recvBuf[i + 10] != ucSum) {
+								i++;
+								continue;
+							}
+
+							// 注意这里无符号整形和有符号整形,会影响数据
+							int16_t usData[3];
+							usData[0] = (uint16_t)recvBuf[i + 3] << 8 | (uint16_t)recvBuf[i + 2];
+							usData[1] = (uint16_t)recvBuf[i + 5] << 8 | (uint16_t)recvBuf[i + 4];
+							usData[2] = (uint16_t)recvBuf[i + 7] << 8 | (uint16_t)recvBuf[i + 6];
+							float Roll = (float)(usData[0]) / 32768.0f * 180.0f; //x轴
+							float Pitch = (float)(usData[1]) / 32768.0f * 180.0f; // y轴
+							float Yaw = (float)(usData[2]) / 32768.0f * 180.0f;// z轴
+							pThis->SetD(Roll, Pitch, Yaw);
+							//qDebug() <<"T: "<<QDateTime::currentDateTime() << "; Get JiaoDu Data----X:" << Roll << " , Y:" << Pitch << " , Z:" << Yaw << ".";
+							i += step;
+							retLen = i;
+						}
+						else if (recvBuf[i + 1] == 0x52) {
+							uint8_t ucSum;
+							// 计算SUM值
+							ucSum = CaliSum(&(recvBuf[i]), 10);
+							if (recvBuf[i + 10] != ucSum) {
+								i++;
+								continue;
+
+							}
+							int16_t usData[3];
+							usData[0] = (uint16_t)recvBuf[i + 3] << 8 | (uint16_t)recvBuf[i + 2];
+							usData[1] = (uint16_t)recvBuf[i + 5] << 8 | (uint16_t)recvBuf[i + 4];
+							usData[2] = (uint16_t)recvBuf[i + 7] << 8 | (uint16_t)recvBuf[i + 6];
+							// 角速度
+							float wx = (float)(usData[0]) / 32768.0f * 2000.0f; //x轴
+							float wy = (float)(usData[1]) / 32768.0f * 2000.0f; // y轴
+							float wz = (float)(usData[2]) / 32768.0f * 2000.0f;// z轴
+							int direction = 0;
+							double Velocity = 0;
+							pThis->SetV(wx, wy, wz,direction, Velocity);
+							SensorDataStruct datatemp;
+							datatemp.direction = direction;
+							datatemp.AngVelocity = Velocity;
+							datatemp.timestamp = timestamp;
+							pThis->NotifyNingshi(datatemp);
+							i += step;
+							retLen = i;
+							//qDebug() << "T: " << QDateTime::currentDateTime() << "; Get JiaoVelocity Data----Vx:" << wx << " , Vy:" << wy << " , Vz:" << wz << ".";
+						}
+						else if (recvBuf[i + 1] == 0x50) {
+							uint8_t ucSum;
+							// 计算SUM值
+							ucSum = CaliSum(&(recvBuf[i]), 10);
+							if (recvBuf[i + 10] != ucSum) {
+								i++;
+								continue;
+							}
+							int16_t usData[7];
+							
+							usData[0] = (uint16_t)recvBuf[i + 2];
+							usData[1] = (uint16_t)recvBuf[i + 3];
+							usData[2] = (uint16_t)recvBuf[i + 4];
+							usData[3] = (uint16_t)recvBuf[i + 5];
+							usData[4] = (uint16_t)recvBuf[i + 6];
+							usData[5] = (uint16_t)recvBuf[i + 7];
+							usData[6] = (uint16_t)recvBuf[i + 9] << 8 | (uint16_t)recvBuf[i + 8];
+// 							static int16_t lastmm = usData[4];
+// 							static int16_t lastss = usData[5];
+// 							static int16_t last = usData[6];
+
+							i += step;
+// 							if (lastmm == usData[4] && lastss == usData[5] && last >= usData[6])
+// 							{
+// 								qDebug() << "something happend";
+// 							}
+// 							lastmm = usData[4];
+// 							lastss = usData[5];
+// 							last = usData[6];
+
+							retLen = i;
+							//qDebug() << "Get TIME Data----YY:" << usData[0] << " , MM:" << usData[1] << " , DD:" << usData[2] << " , HH:" << usData[3] << " , mm:" << usData[4] << " , SS:" << usData[5] << " , MS:" << usData[6] << ".";
+							timestamp = usData[6] + usData[5] * 1000 + usData[4] * 60 * 1000 + usData[3] * 60 * 60 * 1000;
+						}
+						else
+						{
+							i++;
+						}
+					}
+				}
+				else {
+					//
+					//if (i % 500 == 0) {
+					//	Sleep(2);
+					//}
+					retLen = i;
+					break;
+				}
+
+			}
+		}
+		catch (...)
+		{
+		}
+	}
+
+	//retLen = recvLen;
+	return retLen;
+}
+
+SphereBalanceTool::SphereBalanceTool(QWidget *parent)
+    : QMainWindow(parent)
+    , ui(new Ui::SphereBalanceToolClass())
+{
+    ui->setupUi(this);
+    Init();
+}
+
+SphereBalanceTool::~SphereBalanceTool()
+{
+    delete ui;
+}
+
+void SphereBalanceTool::On_pushButton_InitCard_clicked()
+{
+    U8 InitialFlag = 0;
+    I16 rt;
+    U16 i, CardNo;
+    QString xx;
+
+    rt = _ECAT_Master_Open(&gESCExistCards);
+
+    if (gESCExistCards == 0)
+    {
+        QMessageBox::warning(this,"tool warning", "No EtherCat can be found!");
+    }
+    else
+    {
+        for (i = 0; i < ESCtMaxCardNum; i++)
+        {
+            gpESCCardNoList[i] = 0;
+        }
+
+        for (i = 0; i < gESCExistCards; i++)
+        {
+            rt = _ECAT_Master_Get_CardSeq(i, &CardNo);
+            rt = _ECAT_Master_Initial(CardNo);
+            if (rt != 0)
+            {
+                QMessageBox::information(this, "tool information", "_ECAT_Master_Initial");
+            }
+            else
+            {
+                gpESCCardNoList[i] = CardNo;
+                ui->comboBox_CardNum->addItem(QString::number(CardNo));
+                InitialFlag = 1;
+            }
+        }
+
+        if (InitialFlag)
+        {
+            ui->comboBox_CardNum->setCurrentIndex(0);
+            gESCCardNo = gpESCCardNoList[0];
+
+            ui->pushButton_FindSlave->setEnabled(true);
+        }
+    }
+}
+
+void SphereBalanceTool::On_pushButton_FindSlave_clicked()
+{
+    I16 rt;
+    U16 i, SlaveNum = 0, Cnt = 0, ReMapNodeID = 0;
+    U32 VendorID, ProductCode, RevisionNo, SlaveDCTime;
+    QString xx;
+
+    //SetDlgItemInt(IDC_EDIT_SlaveNum, 0, false);
+    ui->lineEdit_SlaveCount->setText("0");
+    rt = _ECAT_Master_Get_SlaveNum(gESCCardNo, &SlaveNum);
+
+    if (rt)
+    {
+        xx = QString("_ECAT_Master_Get_SlaveNum, rt = %1").arg(rt);
+
+        QMessageBox::information(this, "tool information", xx);
+    }
+    else
+    {
+        if (SlaveNum == 0)
+        {
+            xx = QString("Card NO: %1 No slave found!").arg(gESCCardNo);
+            
+            QMessageBox::warning(this, "tool warning", xx);
+        }
+        else
+        {
+            ui->lineEdit_SlaveCount->setText(QString::number(SlaveNum));
+            for (i = 0; i < SlaveNum; i++)
+            {
+                rt = _ECAT_Master_Get_Slave_Info(gESCCardNo, i, &ReMapNodeID, &VendorID, &ProductCode, &RevisionNo, &SlaveDCTime);
+
+                if ((VendorID == 0x1A05 || VendorID == 0x01DD) && ProductCode == 0x8124) //EcAD
+                {
+                    gRevisionNo = RevisionNo;
+                    xx = QString("NodeID:%1").arg(i);
+                    ui->comboBox_NodeID->addItem(xx);
+                    Cnt++;
+                }
+				qDebug() << "gESCCardNo:" << gESCCardNo << ",i:" << i << ",ReMapNodeID:" << ReMapNodeID << ",VendorID:" << VendorID << ",ProductCode:" << ProductCode << ",RevisionNo" << RevisionNo << ",SlaveDCTime:" << SlaveDCTime;
+            }
+
+            if (Cnt > 0)
+            {
+
+                ui->comboBox_NodeID->setCurrentIndex(0);
+                connect(ui->comboBox_NodeID, SIGNAL(currentIndexChanged(int)), this, SLOT(On_comboBox_NodeID_currentIndexChanged(int)),Qt::UniqueConnection);
+                On_comboBox_NodeID_currentIndexChanged(0);
+                //OnSelchangeCBONodeID();
+                ui->comboBox_ADChannel->setCurrentIndex(0);
+                On_comboBox_ADChannel_currentIndexChanged(0);
+                //OnSelchangeCBOChannel();
+
+				ui->pushButton_accurate->setEnabled(true);
+            }
+        }
+    }
+}
+
+void SphereBalanceTool::On_pushButton_accurate_clicked()
+{
+    //先取一遍数据到文件中
+	//GetAllDataOneTime(fCalibValue1, fCalibValue2, fCalibValue3, fCalibValue4, fCalibValue5, fCalibValue6, fCalibValue7, fCalibValue8, true);
+
+	F64 orgValue1 = 0;
+	F64 orgValue2 = 0;
+	F64 orgValue3 = 0;
+	F64 orgValue4 = 0;
+
+	F64 orgValue5 = 0;
+	F64 orgValue6 = 0;
+	F64 orgValue7 = 0;
+	F64 orgValue8 = 0;
+	EtherCATWorker::GetAllDataOneTime(orgValue1, orgValue2, orgValue3, orgValue4, orgValue5, orgValue6, orgValue7, orgValue8,
+		fCalibValue1, fCalibValue2, fCalibValue3, fCalibValue4, fCalibValue5, fCalibValue6, fCalibValue7, fCalibValue8);
+	ui->lineEdit_data1->setText(QString("Ev:%1 -> Calibration:%2").arg(QString::number(orgValue1, 'f', 3)).arg(QString::number(fCalibValue1, 'f', 3)));
+	ui->lineEdit_data2->setText(QString("Ev:%1 -> Calibration:%2").arg(QString::number(orgValue2, 'f', 3)).arg(QString::number(fCalibValue2, 'f', 3)));
+	ui->lineEdit_data3->setText(QString("Ev:%1 -> Calibration:%2").arg(QString::number(orgValue3, 'f', 3)).arg(QString::number(fCalibValue3, 'f', 3)));
+	ui->lineEdit_data4->setText(QString("Ev:%1 -> Calibration:%2").arg(QString::number(orgValue4, 'f', 3)).arg(QString::number(fCalibValue4, 'f', 3)));
+	ui->lineEdit_data5->setText(QString("Ev:%1 -> Calibration:%2").arg(QString::number(orgValue5, 'f', 3)).arg(QString::number(fCalibValue5, 'f', 3)));
+	ui->lineEdit_data6->setText(QString("Ev:%1 -> Calibration:%2").arg(QString::number(orgValue6, 'f', 3)).arg(QString::number(fCalibValue6, 'f', 3)));
+	ui->lineEdit_data7->setText(QString("Ev:%1 -> Calibration:%2").arg(QString::number(orgValue7, 'f', 3)).arg(QString::number(fCalibValue7, 'f', 3)));
+	ui->lineEdit_data8->setText(QString("Ev:%1 -> Calibration:%2").arg(QString::number(orgValue8, 'f', 3)).arg(QString::number(fCalibValue8, 'f', 3)));
+
+	QString calibrationFilePath = "./calibration.ini";
+// 	QFileInfo file_info(calibrationFilePath);
+// 	if (!file_info.isFile()) {
+// 		QMessageBox::information(this, "提示", "配置文件不存在！");
+// 		return;
+// 	}
+	QSettings setting(calibrationFilePath, QSettings::IniFormat);
+
+	setting.setValue("/calibration/CalibValue1", QString("%1").arg(fCalibValue1,0,'f',3));
+	setting.setValue("/calibration/CalibValue2", QString("%1").arg(fCalibValue2,0,'f',3));
+	setting.setValue("/calibration/CalibValue3", QString("%1").arg(fCalibValue3,0,'f',3));
+	setting.setValue("/calibration/CalibValue4", QString("%1").arg(fCalibValue4,0,'f',3));
+	setting.setValue("/calibration/CalibValue5", QString("%1").arg(fCalibValue5,0,'f',3));
+	setting.setValue("/calibration/CalibValue6", QString("%1").arg(fCalibValue6,0,'f',3));
+	setting.setValue("/calibration/CalibValue7", QString("%1").arg(fCalibValue7,0,'f',3));
+	setting.setValue("/calibration/CalibValue8", QString("%1").arg(fCalibValue8,0,'f',3));
+}
+
+void SphereBalanceTool::On_timer_timeout()
+{
+    I16 rt;
+    U16 InitialDone;
+
+	F64 orgValue1 = 0;
+	F64 orgValue2 = 0;
+	F64 orgValue3 = 0;
+	F64 orgValue4 = 0;
+
+	F64 orgValue5 = 0;
+	F64 orgValue6 = 0;
+	F64 orgValue7 = 0;
+	F64 orgValue8 = 0;
+
+    F64 fValue1 = 0;
+    F64 fValue2 = 0;
+    F64 fValue3 = 0;
+    F64 fValue4 = 0;
+
+	F64 fValue5 = 0;
+	F64 fValue6 = 0;
+	F64 fValue7 = 0;
+	F64 fValue8 = 0;
+
+    if (ui->checkBox_Timer->isChecked())
+    {
+		EtherCATWorker::GetAllDataOneTime(orgValue1, orgValue2, orgValue3, orgValue4, orgValue5, orgValue6, orgValue7, orgValue8,
+			fValue1, fValue2, fValue3, fValue4, fValue5, fValue6, fValue7, fValue8);
+		//GetAllDataOneTime(fValue1, fValue2, fValue3, fValue4, fValue5, fValue6, fValue7, fValue8);
+		ui->lineEdit_data1->setText(QString("Ev:%1 -> Weight:%2 | Power:%3").arg(QString::number(orgValue1, 'f', 3)).arg(QString::number(fValue1 - fCalibValue1, 'f', 1)).arg(QString::number((fValue1 - fCalibValue1) * 9.8, 'f', 2)));
+		ui->lineEdit_data2->setText(QString("Ev:%1 -> Weight:%2 | Power:%3").arg(QString::number(orgValue2, 'f', 3)).arg(QString::number(fValue2 - fCalibValue2, 'f', 1)).arg(QString::number((fValue2 - fCalibValue2) * 9.8, 'f', 2)));
+		ui->lineEdit_data3->setText(QString("Ev:%1 -> Weight:%2 | Power:%3").arg(QString::number(orgValue3, 'f', 3)).arg(QString::number(fValue3 - fCalibValue3, 'f', 1)).arg(QString::number((fValue3 - fCalibValue3) * 9.8, 'f', 2)));
+		ui->lineEdit_data4->setText(QString("Ev:%1 -> Weight:%2 | Power:%3").arg(QString::number(orgValue4, 'f', 3)).arg(QString::number(fValue4 - fCalibValue4, 'f', 1)).arg(QString::number((fValue4 - fCalibValue4) * 9.8, 'f', 2)));
+		ui->lineEdit_data5->setText(QString("Ev:%1 -> Weight:%2 | Power:%3").arg(QString::number(orgValue5, 'f', 3)).arg(QString::number(fValue5 - fCalibValue5, 'f', 1)).arg(QString::number((fValue5 - fCalibValue5) * 9.8, 'f', 2)));
+		ui->lineEdit_data6->setText(QString("Ev:%1 -> Weight:%2 | Power:%3").arg(QString::number(orgValue6, 'f', 3)).arg(QString::number(fValue6 - fCalibValue6, 'f', 1)).arg(QString::number((fValue6 - fCalibValue6) * 9.8, 'f', 2)));
+		ui->lineEdit_data7->setText(QString("Ev:%1 -> Weight:%2 | Power:%3").arg(QString::number(orgValue7, 'f', 3)).arg(QString::number(fValue7 - fCalibValue7, 'f', 1)).arg(QString::number((fValue7 - fCalibValue7) * 9.8, 'f', 2)));
+		ui->lineEdit_data8->setText(QString("Ev:%1 -> Weight:%2 | Power:%3").arg(QString::number(orgValue8, 'f', 3)).arg(QString::number(fValue8 - fCalibValue8, 'f', 1)).arg(QString::number((fValue8 - fCalibValue8) * 9.8, 'f', 2)));
+	
+		ui->groupBox_3->setTitle(QString("Datas-Board all weight:%1, all power:%2").arg(QString::number(fValue1 - fCalibValue1 + fValue2 - fCalibValue2 + fValue3 - fCalibValue3 + fValue4 - fCalibValue4, 'f', 1)).arg(QString::number((fValue1 - fCalibValue1) * 9.8 + (fValue2 - fCalibValue2) * 9.8 + (fValue3 - fCalibValue3) * 9.8 + (fValue4 - fCalibValue4) * 9.8, 'f', 1)));
+		ui->groupBox_4->setTitle(QString("Datas-Seat all weight:%1, all power:%2").arg(QString::number(fValue5 - fCalibValue5 + fValue6 - fCalibValue6 + fValue7 - fCalibValue7 + fValue8 - fCalibValue8, 'f', 1)).arg(QString::number((fValue5 - fCalibValue5) * 9.8 + (fValue6 - fCalibValue6) * 9.8 + (fValue7 - fCalibValue7) * 9.8 + (fValue8 - fCalibValue8) * 9.8, 'f', 1)));
+		if (in_sit_stand_estimate)
+		{
+			ZBDate temp;
+			temp.G = (fValue1 - fCalibValue1) * 9.8 + (fValue2 - fCalibValue2) * 9.8 + (fValue3 - fCalibValue3) * 9.8 + (fValue4 - fCalibValue4) * 9.8;
+			temp.leftG = (fValue1 - fCalibValue1) * 9.8 + (fValue2 - fCalibValue2) * 9.8;
+			temp.rightG = (fValue3 - fCalibValue3) * 9.8 + (fValue4 - fCalibValue4) * 9.8;
+			temp.time = QDateTime::currentDateTime().toMSecsSinceEpoch();
+			vec_buff.push_back(temp);
+
+			ZBDate temp2;
+			temp2.G = (fValue5 - fCalibValue5) * 9.8 + (fValue6 - fCalibValue6) * 9.8 + (fValue7 - fCalibValue7) * 9.8 + (fValue8 - fCalibValue8) * 9.8;
+			temp2.leftG = (fValue8 - fCalibValue8) * 9.8 + (fValue6 - fCalibValue6) * 9.8;
+			temp2.rightG = (fValue7 - fCalibValue7) * 9.8 + (fValue5 - fCalibValue5) * 9.8;
+			temp2.time = QDateTime::currentDateTime().toMSecsSinceEpoch();
+			Sit_vec_buff.push_back(temp2);
+		}
+		if (in_step_estimate)
+		{
+			ZBDate temp;
+			temp.G = (fValue1 - fCalibValue1) * 9.8 + (fValue2 - fCalibValue2) * 9.8 + (fValue3 - fCalibValue3) * 9.8 + (fValue4 - fCalibValue4) * 9.8;
+			temp.leftG = (fValue1 - fCalibValue1) * 9.8 + (fValue2 - fCalibValue2) * 9.8;
+			temp.rightG = (fValue3 - fCalibValue3) * 9.8 + (fValue4 - fCalibValue4) * 9.8;
+			temp.time = QDateTime::currentDateTime().toMSecsSinceEpoch();
+			temp.distX = (((fValue3 - fCalibValue3) * 9.8 + (fValue4 - fCalibValue4) * 9.8 - (fValue1 - fCalibValue1) * 9.8 - (fValue2 - fCalibValue2) * 9.8) * L) / ((fValue1 - fCalibValue1) * 9.8 + (fValue2 - fCalibValue2) * 9.8 + (fValue3 - fCalibValue3) * 9.8 + (fValue4 - fCalibValue4) * 9.8);
+			temp.distY = (((fValue2 - fCalibValue2) * 9.8 + (fValue4 - fCalibValue4) * 9.8 - (fValue1 - fCalibValue1) * 9.8 - (fValue3 - fCalibValue3) * 9.8) * M) / ((fValue1 - fCalibValue1) * 9.8 + (fValue2 - fCalibValue2) * 9.8 + (fValue3 - fCalibValue3) * 9.8 + (fValue4 - fCalibValue4) * 9.8);
+			vec_buff.push_back(temp);
+		}
+
+		//if (in_simmove)
+		//{
+		//	lastbuff = curbuff;
+		//	ZBDate temp;
+		//	temp.G = (fValue1 - fCalibValue1) * 9.8 + (fValue2 - fCalibValue2) * 9.8 + (fValue3 - fCalibValue3) * 9.8 + (fValue4 - fCalibValue4) * 9.8;
+		//	temp.leftG = (fValue1 - fCalibValue1) * 9.8 + (fValue2 - fCalibValue2) * 9.8;
+		//	temp.rightG = (fValue3 - fCalibValue3) * 9.8 + (fValue4 - fCalibValue4) * 9.8;
+		//	temp.time = QDateTime::currentDateTime().toMSecsSinceEpoch();
+		//	temp.distX = (((fValue3 - fCalibValue3) * 9.8 + (fValue4 - fCalibValue4) * 9.8 - (fValue1 - fCalibValue1) * 9.8 - (fValue2 - fCalibValue2) * 9.8) * L) / ((fValue1 - fCalibValue1) * 9.8 + (fValue2 - fCalibValue2) * 9.8 + (fValue3 - fCalibValue3) * 9.8 + (fValue4 - fCalibValue4) * 9.8);
+		//	temp.distY = (((fValue1 - fCalibValue1) * 9.8 + (fValue3 - fCalibValue3) * 9.8 - (fValue2 - fCalibValue2) * 9.8 - (fValue4 - fCalibValue4) * 9.8) * M) / ((fValue1 - fCalibValue1) * 9.8 + (fValue2 - fCalibValue2) * 9.8 + (fValue3 - fCalibValue3) * 9.8 + (fValue4 - fCalibValue4) * 9.8);
+		//	curbuff = temp;
+		//	if (lastbuff.time < 0.000001)
+		//	{
+		//		lastbuff = curbuff;
+		//	}
+		//}
+
+	}
+
+    rt = _ECAT_Master_Check_Initial_Done(gESCCardNo, &InitialDone);
+    if (rt == 0)
+    {
+        if (InitialDone == 0)
+            ui->lineEdit_InitInfo->setText("Initial Done");
+        else if (InitialDone == 1)
+            ui->lineEdit_InitInfo->setText("Pre Initial");
+        else if (InitialDone == 99)
+            ui->lineEdit_InitInfo->setText("Initial Error");
+    }
+}
+
+void SphereBalanceTool::On_comboBox_ADChannel_currentIndexChanged(int index)
+{
+    I16 rt;
+    QString xx;
+
+    //gSlotID = ((CComboBox*)GetDlgItem(IDC_CBO_Channel))->GetCurSel();
+    rt = _ECAT_Slave_ESC8124_Set_Input_Enable(gESCCardNo, gNodeID, 0, 1);
+    rt = _ECAT_Slave_ESC8124_Set_Input_Enable(gESCCardNo, gNodeID, 1, 1);
+    rt = _ECAT_Slave_ESC8124_Set_Input_Enable(gESCCardNo, gNodeID, 2, 1);
+    rt = _ECAT_Slave_ESC8124_Set_Input_Enable(gESCCardNo, gNodeID, 3, 1);
+
+	rt = _ECAT_Slave_ESC8124_Set_Input_Enable(gESCCardNo, gNodeID2, 0, 1);
+	rt = _ECAT_Slave_ESC8124_Set_Input_Enable(gESCCardNo, gNodeID2, 1, 1);
+	rt = _ECAT_Slave_ESC8124_Set_Input_Enable(gESCCardNo, gNodeID2, 2, 1);
+	rt = _ECAT_Slave_ESC8124_Set_Input_Enable(gESCCardNo, gNodeID2, 3, 1);
+    if (rt)
+    {
+        xx = QString("_ECAT_Slave_ESC8124_Set_Input_Enable, rt = %1").arg(rt);
+        QMessageBox::warning(this, "tool warning", xx);
+    }
+}
+
+void SphereBalanceTool::On_comboBox_ADMode_currentIndexChanged(int index)
+{
+    I16 rt;
+    U16 Mode;
+    QString xx;
+
+    Mode = ui->comboBox_ADMode->currentIndex();
+
+    rt = _ECAT_Slave_ESC8124_Set_Input_RangeMode(gESCCardNo, gNodeID, 0, Mode);
+    if (rt)
+    {
+        xx = QString("_ECAT_Slave_ESC8124_Set_Input_RangeMode, rt = %1").arg(rt);
+        QMessageBox::warning(this, "tool warning", xx);
+    }
+    rt = _ECAT_Slave_ESC8124_Set_Input_RangeMode(gESCCardNo, gNodeID, 1, Mode);
+    if (rt)
+    {
+        xx = QString("_ECAT_Slave_ESC8124_Set_Input_RangeMode, rt = %1").arg(rt);
+        QMessageBox::warning(this, "tool warning", xx);
+    }
+    rt = _ECAT_Slave_ESC8124_Set_Input_RangeMode(gESCCardNo, gNodeID, 2, Mode);
+    if (rt)
+    {
+        xx = QString("_ECAT_Slave_ESC8124_Set_Input_RangeMode, rt = %1").arg(rt);
+        QMessageBox::warning(this, "tool warning", xx);
+    }
+    rt = _ECAT_Slave_ESC8124_Set_Input_RangeMode(gESCCardNo, gNodeID, 3, Mode);
+    if (rt)
+    {
+        xx = QString("_ECAT_Slave_ESC8124_Set_Input_RangeMode, rt = %1").arg(rt);
+        QMessageBox::warning(this, "tool warning", xx);
+    }
+
+	rt = _ECAT_Slave_ESC8124_Set_Input_RangeMode(gESCCardNo, gNodeID2, 0, Mode);
+	if (rt)
+	{
+		xx = QString("_ECAT_Slave_ESC8124_Set_Input_RangeMode, rt = %1").arg(rt);
+		QMessageBox::warning(this, "tool warning", xx);
+	}
+	rt = _ECAT_Slave_ESC8124_Set_Input_RangeMode(gESCCardNo, gNodeID2, 1, Mode);
+	if (rt)
+	{
+		xx = QString("_ECAT_Slave_ESC8124_Set_Input_RangeMode, rt = %1").arg(rt);
+		QMessageBox::warning(this, "tool warning", xx);
+	}
+	rt = _ECAT_Slave_ESC8124_Set_Input_RangeMode(gESCCardNo, gNodeID2, 2, Mode);
+	if (rt)
+	{
+		xx = QString("_ECAT_Slave_ESC8124_Set_Input_RangeMode, rt = %1").arg(rt);
+		QMessageBox::warning(this, "tool warning", xx);
+	}
+	rt = _ECAT_Slave_ESC8124_Set_Input_RangeMode(gESCCardNo, gNodeID2, 3, Mode);
+	if (rt)
+	{
+		xx = QString("_ECAT_Slave_ESC8124_Set_Input_RangeMode, rt = %1").arg(rt);
+		QMessageBox::warning(this, "tool warning", xx);
+	}
+}
+
+void SphereBalanceTool::On_comboBox_AvgRange_currentIndexChanged(int index)
+{
+    I16 rt;
+    U16 Mode;
+    QString xx;
+
+    Mode = ui->comboBox_AvgRange->currentIndex();
+
+    rt = _ECAT_Slave_ESC8124_Set_Input_AverageMode(gESCCardNo, gNodeID, 0, gAverageMode[Mode]);
+    rt = _ECAT_Slave_ESC8124_Set_Input_AverageMode(gESCCardNo, gNodeID, 1, gAverageMode[Mode]);
+    rt = _ECAT_Slave_ESC8124_Set_Input_AverageMode(gESCCardNo, gNodeID, 2, gAverageMode[Mode]);
+    rt = _ECAT_Slave_ESC8124_Set_Input_AverageMode(gESCCardNo, gNodeID, 3, gAverageMode[Mode]);
+
+	rt = _ECAT_Slave_ESC8124_Set_Input_AverageMode(gESCCardNo, gNodeID2, 0, gAverageMode[Mode]);
+	rt = _ECAT_Slave_ESC8124_Set_Input_AverageMode(gESCCardNo, gNodeID2, 1, gAverageMode[Mode]);
+	rt = _ECAT_Slave_ESC8124_Set_Input_AverageMode(gESCCardNo, gNodeID2, 2, gAverageMode[Mode]);
+	rt = _ECAT_Slave_ESC8124_Set_Input_AverageMode(gESCCardNo, gNodeID2, 3, gAverageMode[Mode]);
+    if (rt)
+    {
+        xx = QString("_ECAT_Slave_ESC8124_Set_Input_AverageMode, rt = %1").arg(rt);
+        QMessageBox::warning(this, "tool warning", xx);
+    }
+}
+
+void SphereBalanceTool::On_comboBox_Conversion_currentIndexChanged(int index)
+{
+    I16 rt;
+    U16 Mode;
+    QString xx;
+
+    Mode = ui->comboBox_Conversion->currentIndex();
+
+    rt = _ECAT_Slave_ESC8124_Set_Input_ConvstFreq_Mode(gESCCardNo, gNodeID, 0, Mode);
+    rt = _ECAT_Slave_ESC8124_Set_Input_ConvstFreq_Mode(gESCCardNo, gNodeID, 1, Mode);
+    rt = _ECAT_Slave_ESC8124_Set_Input_ConvstFreq_Mode(gESCCardNo, gNodeID, 2, Mode);
+    rt = _ECAT_Slave_ESC8124_Set_Input_ConvstFreq_Mode(gESCCardNo, gNodeID, 3, Mode);
+
+	rt = _ECAT_Slave_ESC8124_Set_Input_ConvstFreq_Mode(gESCCardNo, gNodeID2, 0, Mode);
+	rt = _ECAT_Slave_ESC8124_Set_Input_ConvstFreq_Mode(gESCCardNo, gNodeID2, 1, Mode);
+	rt = _ECAT_Slave_ESC8124_Set_Input_ConvstFreq_Mode(gESCCardNo, gNodeID2, 2, Mode);
+	rt = _ECAT_Slave_ESC8124_Set_Input_ConvstFreq_Mode(gESCCardNo, gNodeID2, 3, Mode);
+    if (rt)
+    {
+        xx = QString("_ECAT_Slave_ESC8124_Set_Input_ConvstFreq_Mode, rt = %1").arg(rt);
+        QMessageBox::warning(this, "tool warning", xx);
+    }
+}
+
+void SphereBalanceTool::On_comboBox_NodeID_currentIndexChanged(int index)
+{
+    sscanf_s(ui->comboBox_NodeID->currentText().toStdString().c_str(), "NodeID:%hu", &gNodeID);
+    //gNodeID2 = gNodeID + 3;
+	gNodeID2 = gNodeID;
+}
+
+void SphereBalanceTool::On_comboBox_CardNum_currentIndexChanged(int index)
+{
+
+}
+
+void SphereBalanceTool::On_lineEdit_myheight_textEdited(const QString& text)
+{
+	myheight = text.toDouble();
+}
+
+void SphereBalanceTool::On_lineEdit_myweight_textEdited(const QString& text)
+{
+	myweight = text.toDouble();
+}
+
+void SphereBalanceTool::On_pushButton_SitStandStart_clicked()
+{
+	
+	if (!in_sit_stand_estimate)
+	{
+		in_sit_stand_estimate = true;
+	}
+	else
+	{
+		return;
+	}
+	
+	QTimer* est_timer = new QTimer;
+	est_timer->setInterval(1000);
+	connect(est_timer, &QTimer::timeout, this, &SphereBalanceTool::On_sitstand_est_timer_timeout,Qt::UniqueConnection);
+	est_timer->start();
+
+}
+
+void SphereBalanceTool::On_pushButton_SitStandEstimate_clicked()
+{
+	qDebug() << "********************************SitStandEstimate start***************************************";
+	int cnt = vec_buff.size();
+	int sitCnt = Sit_vec_buff.size();
+	qDebug() << "vec_buff.size():" << vec_buff.size() << "Sit_vec_buff.size():" << Sit_vec_buff.size();
+	for (int i = 0;i< vec_buff.size();i++)
+	{
+		qDebug() << "vec_buff number:"<<i + 1<<",G:" << vec_buff[i].G << ",leftG:" << vec_buff[i].leftG << ",rightG:" << vec_buff[i].rightG << ",time:" << QString::number(vec_buff[i].time,'f',0);
+	}
+	for (int i = 0; i < Sit_vec_buff.size(); i++)
+	{
+		qDebug() << "Sit_vec_buff number:"<<i + 1<< ",G:" << Sit_vec_buff[i].G << ",leftG:" << Sit_vec_buff[i].leftG << ",rightG:" << Sit_vec_buff[i].rightG << ",time:" << QString::number(Sit_vec_buff[i].time, 'f', 0);
+	}
+	qDebug() << "*********************************************************************************************";
+	// 如果取不到数据
+	if (cnt <= 0 || sitCnt <= 0) {
+// 		m_standIndex[gIndex - 1] = 0;
+// 		m_weightTransTime[gIndex - 1] = 0;
+// 		m_standUp[gIndex - 1] = 0;
+		ui->lineEdit_transweighttime->setText("0");
+		ui->lineEdit_standupindex->setText("0");
+		ui->lineEdit_standuptime->setText("0");
+		vec_buff.clear();
+		Sit_vec_buff.clear();
+		return;
+	}
+
+	// 计算
+	double G = vec_buff[0].G + Sit_vec_buff[0].G;
+
+	double standG = vec_buff[0].G;
+
+	//
+	int myCnt = cnt < sitCnt ? cnt : sitCnt;
+	int beginIndex = 0;
+
+	double maxG = G;
+	if (G < 5) {
+		for (int i = 0; i < myCnt; i++) {
+			G = vec_buff[i].G + Sit_vec_buff[i].G;
+			if (G > maxG) {
+				maxG = G;
+				standG = vec_buff[i].G;
+				beginIndex = i;
+				break;
+			}
+		}
+	}
+	qDebug() << "find the beginIndex:" << beginIndex;
+
+	if (maxG < 5) {
+// 		m_standIndex[gIndex - 1] = 0;
+// 		m_weightTransTime[gIndex - 1] = 0;
+// 		m_standUp[gIndex - 1] = 0;
+		ui->lineEdit_transweighttime->setText("0");
+		ui->lineEdit_standupindex->setText("0");
+		ui->lineEdit_standuptime->setText("0");
+		vec_buff.clear();
+		Sit_vec_buff.clear();
+		return;
+	}
+
+	G = maxG;
+	double startTime = vec_buff[0].time;
+	double transTime = 0;
+	double standIndex = 0;
+	int index = 0;
+	double maxStandIndex = 0;
+
+	bool startFlag = false;
+	// 计算体重转移时间
+	for (int i = 0; i < myCnt; i++) {
+		double curG = vec_buff[i].G;
+		double seatG = Sit_vec_buff[i].G;
+		double jx = fabs(vec_buff[i].Jx);
+		double jy = fabs(vec_buff[i].Jy);
+		if ((curG >= standG + 0.05 * G) && !startFlag) {
+			startFlag = true;
+			startTime = vec_buff[i].time;
+			qDebug() << "find the trans begin index:" << i << ",and the trans starttime:" << QString::number(startTime,'f',0);
+		}
+
+		// 关闭
+		if ((curG >= 0.98 * G) && (seatG < 5) && startFlag) {
+			transTime = vec_buff[i].time - startTime;
+			qDebug() << "find the trans end index:" << i << ", and the trans endtime:" << QString::number(vec_buff[i].time,'f',0) << ", and the transtime:" << QString::number(transTime,'f',0);
+			break;
+		}
+	}
+
+	// 计算起立指数
+	for (int i = 1; i < myCnt; i++) {
+		double curG = vec_buff[i].G;
+		double lastG = vec_buff[i - 1].G;
+		double seatG = Sit_vec_buff[i].G;
+		double jx = fabs(vec_buff[i].Jx);
+		double jy = fabs(vec_buff[i].Jy);
+		maxStandIndex = (curG - G) / G * 100;
+		if ((maxStandIndex > standIndex) && (maxStandIndex > 0)) {
+			standIndex = maxStandIndex;
+		}
+		qDebug() << "the maxStandIndex:" << maxStandIndex << ",the count is:" << i;
+		// 力量全部到了底座上
+		//if ((curG >= 0.98*G) && (curG < lastG)) {
+		if (seatG < 5) {
+			index = i;
+			break;
+		}
+	}
+
+
+	double standUpTime = 0;
+	// 起立时间
+	for (int i = beginIndex; i < myCnt; i++) {
+		double curG = Sit_vec_buff[i].G;
+		if (curG < 5) {
+			standUpTime = Sit_vec_buff[i].time - Sit_vec_buff[beginIndex].time;
+			qDebug() << "the standup time:" << QString::number(Sit_vec_buff[i].time,'f',0) << ",and the standUpTime is:" << QString::number(standUpTime, 'f', 0);
+			break;
+		}
+	}
+
+	if (index == 0) {
+		index = myCnt;
+	}
+
+// 	m_standIndex[gIndex - 1] = standIndex;
+// 	m_weightTransTime[gIndex - 1] = transTime;
+// 	m_standUp[gIndex - 1] = standUpTime;
+	ui->lineEdit_transweighttime->setText(QString::number(transTime,'f',3));
+	ui->lineEdit_standupindex->setText(QString::number(standIndex, 'f', 3));
+	ui->lineEdit_standuptime->setText(QString::number(standUpTime, 'f', 3));
+
+	vec_buff.clear();
+	Sit_vec_buff.clear();
+
+	qDebug() << "*********************************SitStandEstimate end****************************************";
+}
+
+void SphereBalanceTool::On_pushButton_StepStart_clicked()
+{
+	QElapsedTimer t;
+	t.start();
+	while (t.elapsed() < 5000) {
+		QCoreApplication::processEvents();
+	}
+
+	if (!in_step_estimate)
+	{
+		in_step_estimate = true;
+	}
+	else
+	{
+		return;
+	}
+
+	QTimer* est_timer = new QTimer;
+	est_timer->setInterval(1000);
+	connect(est_timer, &QTimer::timeout, this, &SphereBalanceTool::On_step_est_timer_timeout, Qt::UniqueConnection);
+	est_timer->start();
+}
+
+void SphereBalanceTool::On_pushButton_StepEstimate_clicked()
+{
+	qDebug() << "**********************************StepEstimate start*****************************************";
+	int cnt = vec_buff.size();
+	int sitCnt = Sit_vec_buff.size();
+	qDebug() << "vec_buff.size():" << vec_buff.size() << "Sit_vec_buff.size():" << Sit_vec_buff.size();
+	for (int i = 0; i < vec_buff.size(); i++)
+	{
+		qDebug() << "vec_buff number:" << i + 1 << ",G:" << vec_buff[i].G << ",distX:" << vec_buff[i].distX << ",distY:" << vec_buff[i].distY << ",leftG:" << vec_buff[i].leftG << ",rightG:" << vec_buff[i].rightG << ",time:" << QString::number(vec_buff[i].time, 'f', 0);
+	}
+	qDebug() << "*********************************************************************************************";
+	// 获取距离数据，都减掉初值
+	std::vector<struct ZBDate> zbBuffList;
+	std::vector<double> distList;
+	for (int i = 0; i < cnt; i++) {
+		struct ZBDate tmpData = vec_buff[i];
+		double x = vec_buff[i].distX - vec_buff[0].distX;
+		tmpData.distX = x;
+		double leftWeight = vec_buff[i].leftG;
+		double rightWeight = vec_buff[i].rightG;
+		double temp1 = 0;
+		if (leftWeight + rightWeight != 0) {
+			temp1 = (rightWeight - leftWeight) / (leftWeight + rightWeight);
+		}
+
+		distList.push_back(temp1);
+		zbBuffList.push_back(tmpData);
+	}
+
+	 // 步频计算
+	int leftStep = 0;
+	int rightStep = 0;
+// 	bool fuFlag = false;
+// 	bool ZhengFlag = false;
+// 	// 计算步数
+// 	for (int i = 0; i < cnt; i++) {
+// 		double temp1 = distList[i];
+// 		if (temp1 < -0.1 && !fuFlag) {
+// 			//
+// 			leftStep++;
+// 			fuFlag = true;
+// 			ZhengFlag = false;
+// 		}
+// 
+// 		if (temp1 > 0.1 && !ZhengFlag) {
+// 			rightStep++;
+// 			ZhengFlag = true;
+// 			fuFlag = false;
+// 		}
+// 	}
+// 
+// 	//  计算步频
+// 	int maxStep = leftStep + rightStep;
+// 	//double stepFreqTime = myZbBuff[cnt - 1].time - myZbBuff[0].time;
+// 	double stepFreq = 0;
+// 	//int minutes = duration/60.0;
+// 	if (60 > 0) {
+// 		stepFreq = ((double)maxStep) / (60 / 60.0);
+// 	}
+
+
+	//极值数据点
+	std::vector<ExtremeValue> ExtremeValueList;
+	/*****************************************重新计算步频与极值点*******************************************************/
+	if (cnt > 4){
+		for (int i = 2; i < cnt - 2; i++) {
+			double temp1 = distList[i];
+			if (distList[i] > distList[i - 1] && distList[i] > distList[i - 2] && distList[i] > distList[i + 1] && distList[i] > distList[i + 2]) {
+				if (ExtremeValueList.size() == 0){
+					if (fabs(distList[i] - distList[0]) > 0.4)
+					{
+						rightStep++;
+						ExtremeValue extValue;
+						extValue.value = distList[i];
+						extValue.index = i;
+						ExtremeValueList.push_back(extValue);
+					}
+				}
+				else {
+					if (fabs(distList[i] - ExtremeValueList[ExtremeValueList.size() - 1].value) > 0.4)
+					{
+						rightStep++;
+						ExtremeValue extValue;
+						extValue.value = distList[i];
+						extValue.index = i;
+						ExtremeValueList.push_back(extValue);
+					}
+					else {
+						if (ExtremeValueList.size() == 1){
+							if (ExtremeValueList[0].value > distList[0] && distList[i] > ExtremeValueList[0].value)
+							{
+								ExtremeValueList[0].value = distList[i];
+								ExtremeValueList[0].index = i;
+							}
+							if (ExtremeValueList[0].value < distList[0] && distList[i] < ExtremeValueList[0].value)
+							{
+								ExtremeValueList[0].value = distList[i];
+								ExtremeValueList[0].index = i;
+							}
+						}
+						else {
+							if (ExtremeValueList[ExtremeValueList.size() - 1].value > ExtremeValueList[ExtremeValueList.size() - 2].value && distList[i] > ExtremeValueList[ExtremeValueList.size() - 1].value)
+							{
+								ExtremeValueList[ExtremeValueList.size() - 1].value = distList[i];
+								ExtremeValueList[ExtremeValueList.size() - 1].index = i;
+							}
+							if (ExtremeValueList[ExtremeValueList.size() - 1].value < ExtremeValueList[ExtremeValueList.size() - 2].value && distList[i] < ExtremeValueList[ExtremeValueList.size() - 1].value)
+							{
+								ExtremeValueList[ExtremeValueList.size() - 1].value = distList[i];
+								ExtremeValueList[ExtremeValueList.size() - 1].index = i;
+							}
+						}
+					}
+				}
+			}
+
+			if (distList[i] < distList[i - 1] && distList[i] < distList[i - 2] && distList[i] < distList[i + 1] && distList[i] < distList[i + 2]) {
+				if (ExtremeValueList.size() == 0) {
+					if (fabs(distList[i] - distList[0]) > 0.4)
+					{
+						leftStep++;
+						ExtremeValue extValue;
+						extValue.value = distList[i];
+						extValue.index = i;
+						ExtremeValueList.push_back(extValue);
+					}
+				}
+				else {
+					if (fabs(distList[i] - ExtremeValueList[ExtremeValueList.size() - 1].value) > 0.4)
+					{
+						leftStep++;
+						ExtremeValue extValue;
+						extValue.value = distList[i];
+						extValue.index = i;
+						ExtremeValueList.push_back(extValue);
+					}
+					else {
+						if (ExtremeValueList.size() == 1) {
+							if (ExtremeValueList[0].value > distList[0] && distList[i] > ExtremeValueList[0].value)
+							{
+								ExtremeValueList[0].value = distList[i];
+								ExtremeValueList[0].index = i;
+							}
+							if (ExtremeValueList[0].value < distList[0] && distList[i] < ExtremeValueList[0].value)
+							{
+								ExtremeValueList[0].value = distList[i];
+								ExtremeValueList[0].index = i;
+							}
+						}
+						else {
+							if (ExtremeValueList[ExtremeValueList.size() - 1].value > ExtremeValueList[ExtremeValueList.size() - 2].value && distList[i] > ExtremeValueList[ExtremeValueList.size() - 1].value)
+							{
+								ExtremeValueList[ExtremeValueList.size() - 1].value = distList[i];
+								ExtremeValueList[ExtremeValueList.size() - 1].index = i;
+							}
+							if (ExtremeValueList[ExtremeValueList.size() - 1].value < ExtremeValueList[ExtremeValueList.size() - 2].value && distList[i] < ExtremeValueList[ExtremeValueList.size() - 1].value)
+							{
+								ExtremeValueList[ExtremeValueList.size() - 1].value = distList[i];
+								ExtremeValueList[ExtremeValueList.size() - 1].index = i;
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	int maxStep = leftStep + rightStep;
+	//double stepFreqTime = myZbBuff[cnt - 1].time - myZbBuff[0].time;
+	double stepFreq = 0;
+	//int minutes = duration/60.0;
+	if (60 > 0) {
+		stepFreq = ((double)maxStep) / (60 / 60.0);
+	}
+	
+	/********************************************************************************************************************/
+
+// 	AnsiString logStr = "duration:" + IntToStr(duration) + ", maxStep:" + IntToStr(maxStep);
+// 	WRITE_LOG(logStr.c_str());
+	qDebug() << "maxStep:" << maxStep << "leftStep:" << leftStep << "rightStep:" << rightStep;
+	cnt = distList.size();
+
+	
+// 	// 计算极值数据
+// 	ZhengFlag = false;
+// 	fuFlag = false;
+// 
+// 	// 计算最小值
+// 	double min = 0;
+// 	int minIndex = -1;
+// 
+// 	// 计算最大值
+// 	double max = 0;
+// 	int maxIndex = -1;
+// 	for (int i = 1; i < cnt; i++) {
+// 		double temp1 = distList[i];
+// 		if (temp1 < -0.1 && !fuFlag) {
+// 			//
+// 			fuFlag = true;
+// 			ZhengFlag = false;
+// 
+// 			min = 0;
+// 			minIndex = -1;
+// 			// 取值
+// 			if (maxIndex != -1) {
+// 				ExtremeValue extValue;
+// 				extValue.value = max;
+// 				extValue.index = maxIndex;
+// 				ExtremeValueList.push_back(extValue);
+// 				// 复位
+// 				max = 0;
+// 				maxIndex = -1;
+// 			}
+// 		}
+// 
+// 		// 负数的极值位置
+// 		if (fuFlag) {
+// 			if (temp1 < min) {
+// 				min = temp1;
+// 				minIndex = i;
+// 			}
+// 		}
+// 
+// 		if (temp1 > 0.1 && !ZhengFlag) {
+// 			ZhengFlag = true;
+// 			fuFlag = false;
+// 
+// 			max = 0;
+// 			maxIndex = -1;
+// 
+// 			if (minIndex != -1) {
+// 				ExtremeValue extValue;
+// 				extValue.value = min;
+// 				extValue.index = minIndex;
+// 				ExtremeValueList.push_back(extValue);
+// 				// 复位
+// 				min = 0;
+// 				minIndex = -1;
+// 			}
+// 		}
+// 
+// 		if (ZhengFlag) {
+// 			if (temp1 > max) {
+// 				max = temp1;
+// 				maxIndex = i;
+// 			}
+// 		}
+// 	}
+// 
+// 	// 处理末尾的数据
+// 	if (maxIndex != -1) {
+// 		ExtremeValue extValue;
+// 		extValue.value = max;
+// 		extValue.index = maxIndex;
+// 		ExtremeValueList.push_back(extValue);
+// 		// 复位
+// 		max = 0;
+// 		maxIndex = -1;
+// 	}
+// 
+// 	if (minIndex != -1) {
+// 		ExtremeValue extValue;
+// 		extValue.value = min;
+// 		extValue.index = minIndex;
+// 		ExtremeValueList.push_back(extValue);
+// 		// 复位
+// 		min = 0;
+// 		minIndex = -1;
+// 	}
+
+	for (int i = 0; i < ExtremeValueList.size(); i++) {
+		//double x = ExtremeValueList[i].value;
+		//AnsiString tmp1 = "ExtremeValueList: " + FloatToStr(x);
+		//WRITE_LOG(tmp1.c_str());
+
+		qDebug() << "ExtremeValueList[i] i:" << i + 1 << ", ExtremeValueList[i].index:" << ExtremeValueList[i].index << ", ExtremeValueList[i].value:" << ExtremeValueList[i].value;
+	}
+
+
+	int extCnt = ExtremeValueList.size();
+	double leftWeightTransTime = 0;
+	double rightWeightTransTime = 0;
+	int leftCnt = 0;
+	int rightCnt = 0;
+
+	//重心左右移动(修改为平均值)
+	double gravityMoving = 0;
+	double totalGravityMoving = 0;
+	// 初始重量
+	double initialWeight = vec_buff[0].G;
+	std::vector<double> leftWeightList;
+	std::vector<double> rightWeightList;
+
+	// 计算开始
+	if (extCnt > 1) {
+		int index1 = -1;
+		int index2 = -1;
+		for (int i = 1; i < extCnt; i++) {
+			// 计算左腿到右腿的时间
+			double value = ExtremeValueList[i].value;
+			if (value > ExtremeValueList[i-1].value) {
+				index1 = ExtremeValueList[i].index;
+				index2 = ExtremeValueList[i - 1].index;
+
+				double diffTime = zbBuffList[index1].time - zbBuffList[index2].time;
+				rightWeightTransTime += fabs(diffTime);
+				double temp1 = fabs(zbBuffList[index1].distX - zbBuffList[index2].distX)  /* - fabs(2 * zbBuffList[0].distX)*/;
+				totalGravityMoving += temp1;
+				//if (temp1 > gravityMoving) {
+				//	gravityMoving = temp1;
+				//	qDebug() << "find gravityMoving 1! zbBuffList[index1].distX:" << zbBuffList[index1].distX << ",zbBuffList[index2].distX:" << zbBuffList[index2].distX << ",index1:" << index1 << ",index2:" << index2;
+				//}
+
+				double tmpG = zbBuffList[index2].G;
+				rightWeightList.push_back(tmpG);
+
+				rightCnt++;
+			}
+			else {
+				index1 = ExtremeValueList[i].index;
+				index2 = ExtremeValueList[i - 1].index;
+
+				double diffTime = zbBuffList[index1].time - zbBuffList[index2].time;
+				leftWeightTransTime += fabs(diffTime);
+
+				double temp1 = fabs(zbBuffList[index1].distX - zbBuffList[index2].distX) /* - fabs(2 * zbBuffList[0].distX)*/;
+				totalGravityMoving += temp1;
+// 				if (temp1 > gravityMoving) {
+// 					gravityMoving = temp1;
+// 					qDebug() << "find gravityMoving 2! zbBuffList[index1].distX:" << zbBuffList[index1].distX << ",zbBuffList[index2].distX:" << zbBuffList[index2].distX << ",index1:" << index1 << ",index2:" << index2;
+// 				}
+				double tmpG = zbBuffList[index1].G;
+				leftWeightList.push_back(tmpG);
+
+				leftCnt++;
+			}
+		}
+
+		if (leftCnt + rightCnt > 0)
+		{
+			gravityMoving = totalGravityMoving / (leftCnt + rightCnt);
+		}
+
+		qDebug() << "the gravityMoving:" << gravityMoving << ",leftCnt:" << leftCnt << ",rightCnt:" << rightCnt << ",all leftWeightTransTime:" << leftWeightTransTime << ",all rightWeightTransTime:" << rightWeightTransTime;
+		if (leftCnt != 0) {
+			leftWeightTransTime = leftWeightTransTime / leftCnt;
+		}
+
+		if (rightCnt != 0) {
+			rightWeightTransTime = rightWeightTransTime / rightCnt;
+		}
+
+		qDebug() << "the leftWeightTransTime:" << leftWeightTransTime << ",rightWeightTransTime:" << rightWeightTransTime;
+
+	}
+
+
+
+	// 求左/右体重对称性
+	// （左侧最大值的平均值-右侧最大值的平均值）÷左右侧中值的平均值
+	double weightAverage = 0;
+	double leftAverage = 0;
+	double rightAverage = 0;
+	double leftG = 0;
+	double rightG = 0;
+	double middleWeight = 0;
+	{
+
+		int leftCnt = leftWeightList.size();
+		int rightCnt = rightWeightList.size();
+
+		for (int i = 0; i < leftCnt; i++) {
+			leftAverage += leftWeightList[i];
+			//leftG += (leftWeightList[i] - initialWeight);
+			leftG += (leftWeightList[i]);
+		}
+
+
+		for (int i = 0; i < rightCnt; i++) {
+			rightAverage += rightWeightList[i];
+			//rightG += (rightWeightList[i] - initialWeight);
+			rightG += (rightWeightList[i]);
+		}
+
+		// 左右侧
+		weightAverage = 0;
+		if ((leftG + rightG) > 0) {
+			int cnt = leftCnt + rightCnt;
+			double totalAverage = (leftAverage - rightAverage);
+			if (cnt > 0) {
+				totalAverage /= cnt;
+			}
+			double totalG = leftG + rightG;
+			if (cnt > 0) {
+				totalG /= cnt;
+			}
+
+			if (fabs(totalG) > 1e-6) {
+				weightAverage = totalAverage / totalG;
+			}
+		}
+	}
+	qDebug() << "weightAverage:" << weightAverage;
+	//计算左右侧对称性
+	double totalDist = 0;
+	for (int i = 0; i < cnt; i++) {
+		qDebug() <<"distList i:"<<i<<",distList[i]:" << distList[i];
+		totalDist += distList[i];
+	}
+	double averageDist = totalDist / cnt * 100;
+	qDebug() << "totalDist:" << totalDist << ",cnt:" << cnt << ",averageDist:" << averageDist;
+
+	ui->lineEdit_step_COGMove->setText(QString::number(gravityMoving / 10,'f',3));
+	ui->lineEdit_step_transweighttime->setText(QString::fromUtf8("左：") + QString::number(leftWeightTransTime / 1000, 'f', 3) + QString::fromUtf8(", 右：") + QString::number(rightWeightTransTime / 1000, 'f', 3));
+	ui->lineEdit_step_lrsymmetric->setText(QString::fromUtf8("原来：") + QString::number(weightAverage * 100, 'f', 3) + QString::fromUtf8(",新：") + QString::number(averageDist, 'f', 3));
+	ui->groupBox_8->setTitle("STEP" + QString::fromUtf8("——步频：") + QString::number(stepFreq));
+}
+
+void SphereBalanceTool::On_sitstand_est_timer_timeout()
+{
+	sitstand_est_seconds--;
+	if (!sitstand_est_seconds)
+	{
+		QTimer* temp_timer = (QTimer*)sender();
+		temp_timer->stop();
+		temp_timer->deleteLater();
+		in_sit_stand_estimate = false;
+		sitstand_est_seconds = 10;
+	}
+	ui->label_countDown->setText(QString::number(sitstand_est_seconds));
+}
+
+void SphereBalanceTool::On_step_est_timer_timeout()
+{
+	step_est_seconds--;
+	if (!step_est_seconds)
+	{
+		QTimer* temp_timer = (QTimer*)sender();
+		temp_timer->stop();
+		temp_timer->deleteLater();
+		in_step_estimate = false;
+		step_est_seconds = 60;
+	}
+	ui->label_countDown_Step->setText(QString::number(step_est_seconds));
+}
+
+void SphereBalanceTool::On_pushButton_test_clicked()
+{
+	QString openexeFilePath = "./openexe.ini";
+	QFileInfo file_info(openexeFilePath);
+	if (!file_info.exists()) {
+		QMessageBox::information(this, "tool information", "openexe.ini not exist!");
+		return;
+	}
+
+	QSettings setting(openexeFilePath, QSettings::IniFormat);
+
+	QString Value1 = setting.value("/openexe/Value1").toString();
+	QString Value2 = setting.value("/openexe/Value2").toString();
+	QString Value3 = setting.value("/openexe/Value3").toString();
+	QString Value4 = setting.value("/openexe/Value4").toString();
+
+	std::string tmpData = "\"" + Value1.toStdString() + "\" \"" + Value2.toStdString() + "\"";
+	char myData[256];
+	memset(myData, 0, sizeof(myData));
+	memcpy(myData, tmpData.c_str(), tmpData.size());
+	SHELLEXECUTEINFO ShExecInfo = { 0 };
+	ShExecInfo.cbSize = sizeof(SHELLEXECUTEINFO);
+	ShExecInfo.fMask = SEE_MASK_NOCLOSEPROCESS;
+	ShExecInfo.hwnd = NULL;
+	ShExecInfo.lpVerb = NULL;
+	//ShExecInfo.lpFile = L"evaluation.exe";
+	ShExecInfo.lpFile = (LPCWSTR)Value3.utf16();
+	wchar_t wchar[256] = { 0 };
+	swprintf(wchar, 256, L"%S", myData);
+	ShExecInfo.lpParameters = wchar;
+	//ShExecInfo.lpDirectory = L"C:\\Users\\sjc\\Downloads\\Debug\\evaluation";
+	ShExecInfo.lpDirectory = (LPCWSTR)Value4.utf16();
+	ShExecInfo.nShow = SW_SHOW;
+	ShExecInfo.hInstApp = NULL;
+	ShellExecuteEx(&ShExecInfo);
+}
+
+void SphereBalanceTool::On_pushButton_simMove_clicked()
+{
+	if (!in_simmove)
+	{
+		in_simmove = true;
+	}
+	else
+	{
+		firsttime_in_simmove = true;
+		in_simmove = false;
+		simMoveTimer.stop();
+
+		//if (workthread)
+		//{
+		//	workthread->stop();
+		//	workthread = NULL;
+		//}
+
+		//qunzu
+		//关闭模式
+		//_ECAT_Slave_User_Motion_Control_Set_Enable_Mode(gESCCardNo, 0, 0);
+
+		_ECAT_Slave_Motion_Set_Svon(gESCCardNo, 0, 0, 1);
+		_ECAT_Slave_Motion_Ralm(gESCCardNo, 0, 0);
+
+		_ECAT_Slave_Motion_Set_Svon(gESCCardNo, 1, 0, 1);
+		_ECAT_Slave_Motion_Ralm(gESCCardNo, 1, 0);
+
+		_ECAT_Slave_CSP_Start_Move(gESCCardNo, 0, 0, 0, 0, 480000, 0, 0, 0, 1, 1);
+		_ECAT_Slave_CSP_Start_Move(gESCCardNo, 1, 0, 0, 0, 100000, 0, 0, 0, 1, 1);
+
+		return;
+	}
+	ZBDate temp;
+	lastbuff = temp;
+	curbuff = temp;
+
+	//workthread = new WorkThread;
+	//workthread->start();
+
+	//使能伺服马达动力
+	_ECAT_Slave_Motion_Set_Svon(gESCCardNo, 0, 0, true);
+	_ECAT_Slave_Motion_Set_Svon(gESCCardNo, 1, 0, true);
+
+	//U16 Status;
+	////群组
+	//U16 AxisNoArray[2] = { 0,1 };
+	//U16 SlotNoArray[2] = { 0,0 };
+	//qDebug() << "gESCCardNo:" << gESCCardNo;
+	//Status = _ECAT_Slave_User_Motion_Control_Set_Type(gESCCardNo, 0, 2, AxisNoArray, SlotNoArray, 1);
+	//qDebug() << "_ECAT_Slave_User_Motion_Control_Set_Type status:" << Status;
+	//Status = _ECAT_Slave_User_Motion_Control_Svon(gESCCardNo, 0, 1);
+	//qDebug() << "_ECAT_Slave_User_Motion_Control_Svon status:" << Status;
+
+	simMoveTimer.setInterval(ui->lineEdit_simmove_jiange->text().toInt());
+	connect(&simMoveTimer, &QTimer::timeout, this, &SphereBalanceTool::On_simMove_timer_timeout, Qt::UniqueConnection);
+	simMoveTimer.start();
+}
+
+void SphereBalanceTool::On_simMove_timer_timeout()
+{
+	qDebug() << "On_simMove_timer_timeout!!!!!11";
+
+ 	// 根据角度换算速度
+ 	double sv1 = 360.0 / 10000000;
+	double H = ui->lineEdit_myheight->text().toDouble();
+ 
+ 	F64 orgValue1 = 0;
+ 	F64 orgValue2 = 0;
+ 	F64 orgValue3 = 0;
+ 	F64 orgValue4 = 0;
+ 
+ 	F64 orgValue5 = 0;
+ 	F64 orgValue6 = 0;
+ 	F64 orgValue7 = 0;
+ 	F64 orgValue8 = 0;
+ 
+ 	F64 fValue1 = 0;
+ 	F64 fValue2 = 0;
+ 	F64 fValue3 = 0;
+ 	F64 fValue4 = 0;
+ 
+ 	F64 fValue5 = 0;
+ 	F64 fValue6 = 0;
+ 	F64 fValue7 = 0;
+ 	F64 fValue8 = 0;
+ 
+ 	EtherCATWorker::GetAllDataOneTime(orgValue1, orgValue2, orgValue3, orgValue4, orgValue5, orgValue6, orgValue7, orgValue8,
+ 		fValue1, fValue2, fValue3, fValue4, fValue5, fValue6, fValue7, fValue8);
+ 
+ 	lastbuff = curbuff;
+ 	ZBDate temp;
+ 	temp.G = (fValue1 - fCalibValue1) + (fValue2 - fCalibValue2) + (fValue3 - fCalibValue3) + (fValue4 - fCalibValue4);
+ 	//temp.leftG = (fValue1 - fCalibValue1) * 9.8 + (fValue2 - fCalibValue2) * 9.8;
+ 	//temp.rightG = (fValue3 - fCalibValue3) * 9.8 + (fValue4 - fCalibValue4) * 9.8;
+ 	temp.time = QDateTime::currentDateTime().toMSecsSinceEpoch();
+ 	//temp.distX = (((fValue3 - fCalibValue3) * 9.8 + (fValue4 - fCalibValue4) * 9.8 - (fValue1 - fCalibValue1) * 9.8 - (fValue2 - fCalibValue2) * 9.8) * L) / ((fValue1 - fCalibValue1) * 9.8 + (fValue2 - fCalibValue2) * 9.8 + (fValue3 - fCalibValue3) * 9.8 + (fValue4 - fCalibValue4) * 9.8);
+ 	temp.distY = (((fValue1 - fCalibValue1) * 9.8 + (fValue3 - fCalibValue3) * 9.8 - (fValue2 - fCalibValue2) * 9.8 - (fValue4 - fCalibValue4) * 9.8) * M) / ((fValue1 - fCalibValue1) * 9.8 + (fValue2 - fCalibValue2) * 9.8 + (fValue3 - fCalibValue3) * 9.8 + (fValue4 - fCalibValue4) * 9.8);
+	temp.Jy = (asin(curbuff.distY / (0.5527 * H)) * 180) / M_PI;
+	curbuff = temp;
+ 	if (lastbuff.time < 0.000001)
+ 	{
+ 		lastbuff = curbuff;
+ 	}
+ 
+ 	if (curbuff.G <10 || lastbuff.G < 10)
+ 	{
+ 		_ECAT_Slave_Motion_Sd_Stop(gESCCardNo, 1, 0, ui->lineEdit_simmove_stopapi_exectime->text().toDouble());
+ 		return;
+ 	}
+ 	double times = (curbuff.time - lastbuff.time) / 1000;
+ 
+ 	qDebug() << "times:" << times << ", curbufftime:" << QString::number(curbuff.time,0,'f') << ", lastbufftime:" << QString::number(lastbuff.time, 0, 'f');
+	
+	//U16 dataCounter = 0;
+	//_ECAT_Slave_User_Motion_Control_Get_DataCnt(gESCCardNo, 0, &dataCounter);
+	//if (dataCounter == 0)
+	//{
+	//	//先暂停模式
+	//	_ECAT_Slave_User_Motion_Control_Set_Enable_Mode(gESCCardNo, 0, 2);
+	//}
+ // 	
+ // 	U16 Status;
+ // 	U16 CardNo = gESCCardNo;
+ // 	U16 NodeId = 1;
+ // 
+ // 	U16 SlotNo = 0, CurveMode = 1, Acc_Type = 0;
+ // 	F64 Acceleration = 0.01;
+ // 	double jx = 0;
+ // 	double jy = 0;
+ // 	double dstJx = 0;
+ // 	double destJy = 0;
+ // 	// destJy 为底板当前角度
+ // 	I32 Position = 0;
+ // 	Status = _ECAT_Slave_Motion_Get_Position(CardNo, NodeId, SlotNo, &Position);
+ // 	destJy = Position * sv1;
+ // 
+ // 	double H = ui->lineEdit_myheight->text().toDouble();
+ // 	double curdegree = (asin(curbuff.distY / (0.5527 * H)) * 180) / M_PI;
+ // 	double madaPosition = curdegree / sv1;
+ // 
+ // 	qDebug() << "curdegree:" << curdegree << ", madaPosition:" << madaPosition << ", Position:" << Position<<", destJy:"<< destJy;
+ //  	static double targetPosition = madaPosition;
+ // 	double lasttargetPosition = targetPosition;
+ // 
+ //  	qDebug() << "(madaPosition - targetPosition):" << fabs(madaPosition - targetPosition);
+ //  	bool targetPositionChanged = false;
+ // 	if (fabs(madaPosition - targetPosition) > ui->lineEdit_com->text().toInt())
+ // 	{
+ // 		targetPosition = madaPosition;
+ // 		targetPositionChanged = true;
+ // 	}
+ // 
+ //  	qDebug() << "last targetPosition:" << targetPosition;
+ // 
+ // 	// 底板达到最大限制的时候停止转动
+ // 	if (destJy <= -16 ) {
+ // 		qDebug() << "destJy <= -16";
+ // 		//_ECAT_Slave_Motion_Sd_Stop(CardNo, 1, 0, ui->lineEdit_simmove_stopapi_exectime->text().toDouble());
+ // 		return;
+ // 	}
+ // 	else if ((destJy > 16)) {
+ // 		qDebug() << "destJy > 16";
+ // 		//_ECAT_Slave_Motion_Sd_Stop(CardNo, 1, 0, ui->lineEdit_simmove_stopapi_exectime->text().toDouble());
+ // 		return;
+ // 	}
+ // 
+ // 	if (targetPositionChanged)
+ // 	{
+ // 		//U16 dataCounter = 0;
+ // 		_ECAT_Slave_User_Motion_Control_Get_DataCnt(gESCCardNo, 0, &dataCounter);
+ //		qDebug() << "dataCounter:" << dataCounter<<", lasttargetPosition:"<< lasttargetPosition;
+ // 
+ // 		I32 step = (lasttargetPosition - targetPosition) / (curbuff.time - lastbuff.time);
+ // 		if (curbuff.time - lastbuff.time > 100 - dataCounter)
+ // 		{
+ // 			for (int i = curbuff.time - lastbuff.time -100 + dataCounter;i < curbuff.time - lastbuff.time;i++)
+ // 			{
+ // 				I32 DataArray[2] = {0, lasttargetPosition + (i+1)*step};
+ // 				_ECAT_Slave_User_Motion_Control_Set_Data(gESCCardNo, 0, DataArray);
+ // 			}
+ // 		}
+ // 		else
+ // 		{
+ // 			for (int i = 0;i < curbuff.time - lastbuff.time;i++)
+ // 			{
+ // 				I32 DataArray[2] = {0, lasttargetPosition + (i+1) * step };
+ // 				_ECAT_Slave_User_Motion_Control_Set_Data(gESCCardNo, 0, DataArray);
+ // 			}
+ // 		}
+ // 	}
+ // 
+ // 	//开启模式
+	//_ECAT_Slave_User_Motion_Control_Get_DataCnt(gESCCardNo, 0, &dataCounter);
+	//qDebug() << "yundong dataCounter:" << dataCounter;
+	//if (dataCounter > 0)
+	//{
+	//	_ECAT_Slave_User_Motion_Control_Set_Enable_Mode(gESCCardNo, 0, 1);
+	//}
+
+	//csp
+	//ZBDate temp1;
+	//static ZBDate target = temp1;
+	//static ZBDate lastTarget = temp1;
+
+	//if (firsttime_in_simmove)
+	//{
+	//	target = curbuff;
+	//}
+
+	//U16 Status;
+	//U16 CardNo = gESCCardNo;
+	//U16 NodeId = 1;
+	//U16 SlotNo = 0, CurveMode = 1, Acc_Type = 0;
+	//F64 Acceleration = 0.01;
+	//double destJy = 0;
+	//// destJy 为底板当前角度
+	//I32 Position = 0;
+	//Status = _ECAT_Slave_Motion_Get_Position(CardNo, NodeId, SlotNo, &Position);
+	//destJy = Position * sv1;
+
+	//// 底板达到最大限制的时候停止转动
+	//if (destJy <= -ui->lineEdit_simmove_limit->text().toInt()) {
+	//	qDebug() << "destJy <= -16";
+	//	_ECAT_Slave_Motion_Sd_Stop(CardNo, 1, 0, ui->lineEdit_simmove_stopapi_exectime->text().toDouble());
+	//	return;
+	//}
+	//else if ((destJy > ui->lineEdit_simmove_limit->text().toInt())) {
+	//	qDebug() << "destJy > 16";
+	//	_ECAT_Slave_Motion_Sd_Stop(CardNo, 1, 0, ui->lineEdit_simmove_stopapi_exectime->text().toDouble());
+	//	return;
+	//}
+
+	//double H = ui->lineEdit_myheight->text().toDouble();
+	//double curdegree = (asin(curbuff.distY / (0.5527 * H)) * 180) / M_PI;
+	//double targetPosition = curdegree / sv1;
+
+	//qDebug() << "curdegree:" << curdegree << ", targetPosition:" << targetPosition << ", curPosition:" << Position;
+	//static double lasttargetPosition = targetPosition;
+	////int tempDirection = 0;
+	////if (madaPosition - Position > 0.000001)
+	////{
+	////	tempDirection = 1;
+	////}
+	////else
+	////{
+	////	tempDirection = 2;
+	////}
+	////static int Direction = tempDirection; //0表示无方向，1正方向前，2负方向后
+	////qDebug() << ", tempDirection:" << tempDirection << ", Direction:" << Direction;
+
+	//qDebug() << "lasttargetPosition:" << lasttargetPosition;
+	//qDebug() << "(madaPosition - lasttargetPosition):" << fabs(targetPosition - lasttargetPosition);
+	//bool targetChanged = false;
+
+	//if (ui->checkBox_bigger->isChecked())
+	//{
+	//	if (fabs(targetPosition - lasttargetPosition) > ui->lineEdit_simmove_hulue->text().toInt())
+	//	{
+	//		target = curbuff;
+	//		//Direction = tempDirection;
+	//		targetChanged = true;
+	//	}
+	//}
+	//else
+	//{
+	//	if (fabs(targetPosition - lasttargetPosition) > 0.000001 && fabs(targetPosition - lasttargetPosition) < ui->lineEdit_simmove_hulue->text().toInt())
+	//	{
+	//		target = curbuff;
+	//		//Direction = tempDirection;
+	//		targetChanged = true;
+	//	}
+	//}
+	//
+
+	//qDebug() << "lasttargetPosition:" << lasttargetPosition;
+	//
+	//I32 Target_Velocity = 0;
+	//qDebug() << "target.time:" << QString::number(target.time,0,'f') << ",lastTarget.time:" << QString::number(lastTarget.time, 0, 'f') << ", targettimes:" << (target.time - lastTarget.time);
+	//qDebug() << "target.distY:" << target.distY << ",lastTarget.distY:" << lastTarget.distY ;
+	//if (firsttime_in_simmove)
+	//{
+	//	Target_Velocity = ui->lineEdit_simmove_vel->text().toInt();
+	//}
+	//else
+	//{
+	//	if (targetChanged)
+	//	{
+	//		double targettimes = (target.time - lastTarget.time) / ui->lineEdit_simmove_mschange->text().toInt();
+	//		double distances = fabs(target.distY - lastTarget.distY);
+	//		Target_Velocity = (int)(12 * (distances / sv1) / targettimes);
+	//	}
+	//}
+	////限制一下速度
+	//if (Target_Velocity < -ui->lineEdit_simmove_vel->text().toInt()) {
+	//	Target_Velocity = -ui->lineEdit_simmove_vel->text().toInt();
+	//}
+
+	//if (Target_Velocity > ui->lineEdit_simmove_vel->text().toInt()) {
+	//	Target_Velocity = ui->lineEdit_simmove_vel->text().toInt();
+	//}
+
+	//// 显示当前速度
+	//qDebug() << "first Current Target_Velocity：" << Target_Velocity;
+
+	//if (firsttime_in_simmove)
+	//{
+	//	lastTarget = target;
+	//	firsttime_in_simmove = false;
+	//	_ECAT_Slave_CSP_Start_Move(gESCCardNo, 1, 0, (I32)targetPosition, Target_Velocity, Target_Velocity, Target_Velocity, 0, 0, 0, 1);
+	//}
+	//else
+	//{
+	//	if (targetChanged)
+	//	{
+	//		lastTarget = target;
+	//		lasttargetPosition = targetPosition;
+	//		_ECAT_Slave_CSP_Start_Move(gESCCardNo, 1, 0, (I32)targetPosition, Target_Velocity, Target_Velocity, Target_Velocity, 0, 0, 0, 1);
+	//	}
+	//}
+	
+
+ 	double lastJy = lastbuff.Jy;
+ 	double curJy = curbuff.Jy;
+ 	double csvtimes = times;
+ 
+ 	qDebug() << "csvtimes:" << csvtimes ;
+ 
+ 	// 角度差值
+ 	if (firsttime_in_simmove)
+ 	{
+ 		lastJy = 0;
+ 		firsttime_in_simmove = false;
+ 	}
+ 	double s = curJy - lastJy;
+ 
+ 	I32 Target_Velocity = 0;
+ 	if (times > 1e-6) {
+ 		Target_Velocity = (int)(ui->lineEdit_simmove_jiaozhengsudu->text().toDouble() * (s / sv1) / csvtimes);
+ 	}
+ 
+ 	// 大于0的时候取正值
+ 	if (curJy > lastJy) {
+ 		Target_Velocity = abs(Target_Velocity);
+ 	}
+ 
+ 	//使能伺服马达动力
+ 	_ECAT_Slave_Motion_Set_Svon(gESCCardNo, 1, 0, true);
+ 
+ 	U16 Status;
+ 	U16 CardNo = gESCCardNo;
+ 	U16 NodeId = 1;
+ 
+ 	U16 SlotNo = 0, CurveMode = 1, Acc_Type = 0;
+ 	F64 Acceleration = ui->lineEdit_simmove_api_exectime->text().toDouble();
+ 	double destJy = 0;
+ 	// destJy 为底板当前角度
+ 	//bool posRet = GetCurYPosition(modeA, sv1, destJy);
+ 	I32 Position = 0;
+ 	Status = _ECAT_Slave_Motion_Get_Position(CardNo, NodeId, SlotNo, &Position);
+ 	destJy = Position * sv1;
+ 
+ 	// 显示当前速度
+ 	//qDebug() << "destJy:" << destJy<<", lastJy:"<< lastJy<<", curJy:"<< curJy;
+ 
+	
+	double curdegree = (asin(curbuff.distY / (0.5527 * H)) * 180) / M_PI + ui->lineEdit_simmove_jiaozhengzhongxin->text().toDouble();
+	double targetPosition = curdegree / sv1;
+ 	//bool zhengfuFlag = false;
+ 	if (destJy < curdegree) {
+ 		Target_Velocity = fabs(Target_Velocity);
+
+		if (ui->checkBox_jiaozhengcsv->isChecked())
+		{
+			//矫正速度
+			if (fabs(targetPosition - Position) > ui->lineEdit_simmove_jiaozhenghulue->text().toDouble())
+			{
+				double jiaozheng_Target_Velocity = fabs(targetPosition - Position) / (ui->lineEdit_simmove_jiange->text().toDouble() / 1000);
+				jiaozheng_Target_Velocity = jiaozheng_Target_Velocity * ui->lineEdit_simmove_jiaozhengcsv_k->text().toDouble();
+				if (jiaozheng_Target_Velocity > Target_Velocity)
+				{
+					Target_Velocity = jiaozheng_Target_Velocity;
+				}
+			}
+		}
+ 	}
+ 	else {
+ 		Target_Velocity = -fabs(Target_Velocity);
+		if (ui->checkBox_jiaozhengcsv->isChecked())
+		{
+			//矫正速度
+			if (fabs(targetPosition - Position) > ui->lineEdit_simmove_jiaozhenghulue->text().toDouble())
+			{
+				double jiaozheng_Target_Velocity = -fabs(targetPosition - Position) / (ui->lineEdit_simmove_jiange->text().toDouble() / 1000);
+				jiaozheng_Target_Velocity = jiaozheng_Target_Velocity * ui->lineEdit_simmove_jiaozhengcsv_k->text().toDouble();
+				if (jiaozheng_Target_Velocity < Target_Velocity)
+				{
+					Target_Velocity = jiaozheng_Target_Velocity;
+				}
+			}
+		}
+ 	}
+
+	// 轻微晃动的时候，底板不动
+	if (Target_Velocity >= 0) {
+		if (Target_Velocity < ui->lineEdit_simmove_hulue->text().toDouble()) {
+			Target_Velocity = 0;
+			qDebug() << "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+		}
+	}
+	else {
+		if (Target_Velocity > -ui->lineEdit_simmove_hulue->text().toDouble()) {
+			Target_Velocity = 0;
+			qDebug() << "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+		}
+	}
+
+	if (Target_Velocity < -ui->lineEdit_simmove_vel->text().toInt()) {
+		Target_Velocity = -ui->lineEdit_simmove_vel->text().toInt();
+		qDebug() << "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+	}
+
+	if (Target_Velocity > ui->lineEdit_simmove_vel->text().toInt()) {
+		Target_Velocity = ui->lineEdit_simmove_vel->text().toInt();
+		qDebug() << "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+	}
+ 
+ 	// 底板达到最大限制的时候停止转动
+ 	if ((destJy <= -ui->lineEdit_simmove_limit->text().toInt()) && (Target_Velocity < -0.000001)) {
+ 		Target_Velocity = 0;
+ 		qDebug() << "destJy <= -16";
+ 	}
+ 	else if ((destJy > ui->lineEdit_simmove_limit->text().toInt()) && (Target_Velocity > 0.000001)) {
+ 		Target_Velocity = 0;
+ 		qDebug() << "destJy > 16";
+ 	}
+ 
+ 	qDebug() << "last start move, Target_Velocity = "<< Target_Velocity;
+ 	// 限制最大值，防止超限
+ 	Status = _ECAT_Slave_CSV_Start_Move(CardNo, NodeId, SlotNo, Target_Velocity, Acceleration, CurveMode, Acc_Type);
+}
+
+void SphereBalanceTool::On_pushButton_startsim_clicked()
+{
+	//开始启动倒计时
+	starttime = QDateTime::currentDateTime();
+	elapsedTimer.start(0);
+
+	int speed = 0;
+	if (ui->radioButton->isChecked())
+	{
+		speed = 3;
+	}
+	if (ui->radioButton_2->isChecked())
+	{
+		speed = 2;
+	}
+	if (ui->radioButton_3->isChecked())
+	{
+		speed = 1;
+	}
+	ui->widget_GRscreen->setSpeed(speed);
+	//ui->widget_GRscreen->setScreenType(1);
+	ui->widget_GRscreen->start(starttime);
+}
+
+void SphereBalanceTool::On_pushButton_endsim_clicked()
+{
+	ui->widget_GRscreen->stop();
+	elapsedTimer.stop();
+	ui->label_CountDown_simsun->setText("00:00:60 000");
+}
+
+void SphereBalanceTool::On_elapsedTimer_timeout()
+{
+	QDateTime current = QDateTime::currentDateTime();
+	int cha = starttime.msecsTo(current);
+	if (60000-cha > 0)
+	{
+		ui->label_CountDown_simsun->setText(QTime(0, 0, 0, 0).addMSecs(60000 - cha).toString(QString::fromLatin1("HH:mm:ss zzz")));
+	}
+	else
+	{
+		ui->widget_GRscreen->stop();
+		elapsedTimer.stop();
+		ui->label_CountDown_simsun->setText("00:00:60 000");
+	}
+}
+
+void SphereBalanceTool::On_comboBox_screenType_currentIndexChanged(int index)
+{
+	ui->label_16->setText(ui->comboBox_screenType->itemText(index));
+	ui->widget_GRscreen->setScreenType(index + 1);
+	if (index == 2 || index == 3)
+	{
+		this->setMinimumWidth(1800);
+		this->setMinimumHeight(1200);
+	}
+	else
+	{
+		this->setMinimumWidth(750);
+		this->setMinimumHeight(760);
+	}
+}
+
+void SphereBalanceTool::On_lineEdit_ptmove_x_textEdited(const QString& text)
+{
+	double x = text.toDouble();
+
+	double sv1 = 360.0 / 10000000;
+	//转换为脉冲数
+	double targetPosition = x / sv1;
+	ui->lineEdit_ptmove_xp->setText(QString::number(targetPosition,'f',0));
+
+}
+
+void SphereBalanceTool::On_lineEdit_ptmove_y_textEdited(const QString& text)
+{
+	double y = text.toDouble();
+
+	double sv1 = 360.0 / 10000000;
+	//转换为脉冲数
+	double targetPosition = y / sv1;
+	ui->lineEdit_ptmove_yp->setText(QString::number(targetPosition, 'f', 0));
+}
+
+void SphereBalanceTool::On_pushButton_ptmove_start_clicked()
+{
+	ui->pushButton_ptmove_start->setText("Moving");
+
+	//使能伺服马达动力
+	_ECAT_Slave_Motion_Set_Svon(gESCCardNo, 0, 0, true);
+	_ECAT_Slave_Motion_Set_Svon(gESCCardNo, 1, 0, true);
+
+	//计算速度
+	I32 XPosition = ui->lineEdit_ptmove_xp->text().toLong();
+	I32 YPosition = ui->lineEdit_ptmove_yp->text().toLong();
+
+	I32 XVelocity = abs(XPosition / ui->lineEdit_ptmove_finishtime->text().toInt());
+	I32 YVelocity = abs(YPosition / ui->lineEdit_ptmove_finishtime->text().toInt());
+
+
+	_ECAT_Slave_CSP_Start_Move(gESCCardNo, 0, 0, (I32)XPosition, XVelocity, XVelocity, XVelocity, 0, 0, 0, 1);
+	_ECAT_Slave_CSP_Start_Move(gESCCardNo, 1, 0, (I32)YPosition, YVelocity, YVelocity, YVelocity, 0, 0, 0, 1);
+}
+
+void SphereBalanceTool::On_pushButton_ptmove_palse_clicked()
+{
+	if (ui->pushButton_ptmove_start->text() == "Moving")
+	{
+		//暂停运动
+		_ECAT_Slave_Motion_Sd_Stop(gESCCardNo, 0, 0, 0);
+		_ECAT_Slave_Motion_Sd_Stop(gESCCardNo, 1, 0, 0);
+		ui->pushButton_ptmove_start->setText("Continue");
+	}
+}
+
+void SphereBalanceTool::On_pushButton_ptmove_reset_clicked()
+{
+	_ECAT_Slave_Motion_Set_Svon(gESCCardNo, 0, 0, 1);
+	_ECAT_Slave_Motion_Ralm(gESCCardNo, 0, 0);
+
+	_ECAT_Slave_Motion_Set_Svon(gESCCardNo, 1, 0, 1);
+	_ECAT_Slave_Motion_Ralm(gESCCardNo, 1, 0);
+
+	_ECAT_Slave_CSP_Start_Move(gESCCardNo, 0, 0, 0, 0, 100000, 0, 0, 0, 1, 1);
+	_ECAT_Slave_CSP_Start_Move(gESCCardNo, 1, 0, 0, 0, 100000, 0, 0, 0, 1, 1);
+
+	ui->pushButton_ptmove_start->setText("startMove");
+}
+
+void SphereBalanceTool::On_horizontalSlider_valueChanged(int value)
+{
+	ui->label_52->setText(QString("左右角度:%1").arg(value));
+	ui->widget_biaopan->setZuoyouDegree(value);
+}
+
+void SphereBalanceTool::On_horizontalSlider_2_valueChanged(int value)
+{
+	ui->label_53->setText(QString("前后角度:%1").arg(value));
+	ui->widget_biaopan->setQianhouDegree(value);
+}
+
+void SphereBalanceTool::On_pushButton_connect_clicked()
+{
+	if (ui->lineEdit_com->text().isEmpty())
+	{
+		return;
+	}
+// 	std::string result;
+// 	SerialCommunication sc;
+// 	sc.PortInit();
+// 	Param myparam;
+// 	myparam.serialPortName = ui->lineEdit_com->text();
+// 	myparam.baudRate = QSerialPort::BaudRate::Baud115200;
+// 	myparam.dataBits = QSerialPort::DataBits::Data8;
+// 	myparam.parity = QSerialPort::Parity::NoParity;
+// 	myparam.stopBits = QSerialPort::StopBits::OneStop;
+// 	if (!sc.PortOpen(myparam))
+// 	{
+// 		result = "OPEN PORT FAILED";
+// 		return;
+// 	}
+	m_KMySerial.m_lpUser = this;
+	int r1 = m_KMySerial.Open(ui->lineEdit_com->text().toStdString().c_str(), "115200,n,8,1", Proc3DSensorV2Data);
+}
+
+void SphereBalanceTool::On_pushButton_discon_clicked()
+{
+	m_KMySerial.Close();
+}
+
+void SphereBalanceTool::On_pushButton_setReturnContent_clicked()
+{
+	//解锁
+	char jiesuo[5];
+	jiesuo[0] = 0xFF;
+	jiesuo[1] = 0xAA;
+	jiesuo[2] = 0x69;
+	jiesuo[3] = 0x88;
+	jiesuo[4] = 0xB5;
+	m_KMySerial.SendData(jiesuo, 5);
+	//回传内容
+	char data[5];
+	data[0] = 0xFF;
+	data[1] = 0xAA;
+	data[2] = 0x02;
+	data[3] = 0x0D;
+	data[4] = 0x00;
+	m_KMySerial.SendData(data,5);
+	//保存设置
+	char baocun[5];
+	baocun[0] = 0xFF;
+	baocun[1] = 0xAA;
+	baocun[2] = 0x00;
+	baocun[3] = 0x00;
+	baocun[4] = 0x00;
+	m_KMySerial.SendData(baocun, 5);
+}
+
+void SphereBalanceTool::On_pushButton_setReturnFreq_clicked()
+{
+	char jiesuo[5];
+	jiesuo[0] = 0xFF;
+	jiesuo[1] = 0xAA;
+	jiesuo[2] = 0x69;
+	jiesuo[3] = 0x88;
+	jiesuo[4] = 0xB5;
+	m_KMySerial.SendData(jiesuo, 5);
+
+	char data[5];
+	data[0] = 0xFF;
+	data[1] = 0xAA;
+	data[2] = 0x03;
+	data[3] = 0x06;
+	data[4] = 0x00;
+	m_KMySerial.SendData(data, 5);
+
+	char baocun[5];
+	baocun[0] = 0xFF;
+	baocun[1] = 0xAA;
+	baocun[2] = 0x00;
+	baocun[3] = 0x00;
+	baocun[4] = 0x00;
+	m_KMySerial.SendData(baocun, 5);
+}
+
+void SphereBalanceTool::SetV(double vx, double vy, double vz,int &direction,double &Velocity)
+{
+	ui->lineEdit_vx->setText(QString::number(vx, 'f', 3));
+	ui->lineEdit_vy->setText(QString::number(vy, 'f', 3));
+	ui->lineEdit_vz->setText(QString::number(vz, 'f', 3));
+	ui->lineEdit_v->setText(QString::number(sqrt(vx*vx + vy*vy + vz*vz), 'f', 3));
+	Velocity = sqrt(vx * vx + vy * vy + vz * vz);
+	int directIndex = ui->comboBox_direction->currentIndex();
+	bool hasJudged = false;
+	switch (directIndex)
+	{
+	case 0:
+		//判定角速度的绝对值
+		hasJudged = false;
+		if (fabs(vx) > fabs(vy) && fabs(vx) > fabs(vz) && fabs(vx) > 3)
+		{
+			hasJudged = true;
+			if (vx > 0)
+			{
+				ui->label_direction_judge->setText("垂直俯仰：上↑");
+				direction = 1;
+			}
+			else
+			{
+				ui->label_direction_judge->setText("垂直俯仰：下↓");
+				direction = 2;
+			}
+		}
+		if (fabs(vy) > fabs(vx) && fabs(vy) > fabs(vz) && fabs(vy) > 3)
+		{
+			hasJudged = true;
+			if (vy > 0)
+			{
+				ui->label_direction_judge->setText("左右倾斜：左←");
+				direction = 5;
+			}
+			else
+			{
+				ui->label_direction_judge->setText("左右倾斜：右→");
+				direction = 6;
+			}
+		}
+		if (fabs(vz) > fabs(vy) && fabs(vz) > fabs(vx) && fabs(vz) > 3)
+		{
+			hasJudged = true;
+			if (vz > 0)
+			{
+				ui->label_direction_judge->setText("水平转动：右→");
+				direction = 4;
+			}
+			else
+			{
+				ui->label_direction_judge->setText("水平转动：左←");
+				direction = 3;
+			}
+
+		}
+		if (!hasJudged)
+		{
+			ui->label_direction_judge->setText("判断不出来，可能没在动");
+		}
+		break;
+	case 1:
+		hasJudged = false;
+		if (fabs(vx) > 3)
+		{
+			hasJudged = true;
+			if (vx > 0)
+			{
+				ui->label_direction_judge->setText("垂直俯仰：上↑");
+				direction = 1;
+			}
+			else
+			{
+				ui->label_direction_judge->setText("垂直俯仰：下↓");
+				direction = 2;
+			}
+		}
+		if (!hasJudged)
+		{
+			ui->label_direction_judge->setText("判断不出来，可能没在动");
+		}
+		break;
+	case 2:
+		hasJudged = false;
+		if (fabs(vz) > 3)
+		{
+			hasJudged = true;
+			if (vz > 0)
+			{
+				ui->label_direction_judge->setText("水平转动：右→");
+				direction = 4;
+			}
+			else
+			{
+				ui->label_direction_judge->setText("水平转动：左←");
+				direction = 3;
+			}
+		}
+		if (!hasJudged)
+		{
+			ui->label_direction_judge->setText("判断不出来，可能没在动");
+		}
+		break;
+	case 3:
+		hasJudged = false;
+		if (fabs(vy) > 3)
+		{
+			hasJudged = true;
+			if (vy > 0)
+			{
+				ui->label_direction_judge->setText("左右倾斜：左←");
+				direction = 5;
+			}
+			else
+			{
+				ui->label_direction_judge->setText("左右倾斜：右→");
+				direction = 6;
+			}
+		}
+		if (!hasJudged)
+		{
+			ui->label_direction_judge->setText("判断不出来，可能没在动");
+		}
+		break;
+	default:
+		break;
+	}
+}
+
+void SphereBalanceTool::SetD(double dx, double dy, double dz)
+{
+	ui->lineEdit_dx->setText(QString::number(dx, 'f', 3));
+	ui->lineEdit_dy->setText(QString::number(dy, 'f', 3));
+	ui->lineEdit_dz->setText(QString::number(dz, 'f', 3));
+}
+
+void SphereBalanceTool::NotifyNingshi(const SensorDataStruct& sensordata)
+{
+	ui->widget_ningshi->OnNotifySensorData(sensordata);
+}
+
+void SphereBalanceTool::Init()
+{
+    ui->pushButton_FindSlave->setEnabled(false);
+	ui->pushButton_accurate->setEnabled(false);
+    connect(ui->pushButton_InitCard, SIGNAL(clicked()), this, SLOT(On_pushButton_InitCard_clicked()));
+    connect(ui->pushButton_FindSlave, SIGNAL(clicked()), this, SLOT(On_pushButton_FindSlave_clicked()));
+    connect(ui->pushButton_accurate, SIGNAL(clicked()), this, SLOT(On_pushButton_accurate_clicked()));
+
+	connect(ui->pushButton_SitStandStart, SIGNAL(clicked()), this, SLOT(On_pushButton_SitStandStart_clicked()));
+	connect(ui->pushButton_SitStandEstimate, SIGNAL(clicked()), this, SLOT(On_pushButton_SitStandEstimate_clicked()));
+
+	connect(ui->pushButton_StepStart, SIGNAL(clicked()), this, SLOT(On_pushButton_StepStart_clicked()));
+	connect(ui->pushButton_StepEstimate, SIGNAL(clicked()), this, SLOT(On_pushButton_StepEstimate_clicked()));
+
+	connect(ui->pushButton_test, SIGNAL(clicked()), this, SLOT(On_pushButton_test_clicked()));
+	connect(ui->pushButton_simMove, SIGNAL(clicked()), this, SLOT(On_pushButton_simMove_clicked()));
+
+	connect(ui->lineEdit_myheight, SIGNAL(textEdited(const QString &)), this, SLOT(On_lineEdit_myheight_textEdited(const QString &)));
+	connect(ui->lineEdit_myweight, SIGNAL(textEdited(const QString &)), this, SLOT(On_lineEdit_myweight_textEdited(const QString &)));
+
+
+    ui->comboBox_ADMode->addItem("-5 ~ 5V");
+    ui->comboBox_ADMode->addItem("-10 ~ 10V");
+    ui->comboBox_ADMode->setCurrentIndex(0);
+
+    ui->comboBox_ADChannel->addItem("CH 0:");
+    ui->comboBox_ADChannel->addItem("CH 1:");
+    ui->comboBox_ADChannel->addItem("CH 2:");
+    ui->comboBox_ADChannel->addItem("CH 3:");
+    ui->comboBox_ADChannel->setCurrentIndex(0);
+
+    gAverageMode[0] = 0;
+    gAverageMode[1] = 2;
+    gAverageMode[2] = 4;
+    gAverageMode[3] = 8;
+    gAverageMode[4] = 16;
+    gAverageMode[5] = 32;
+    gAverageMode[6] = 64;
+
+    ui->comboBox_AvgRange->addItem("0: Not Avg");
+    ui->comboBox_AvgRange->addItem("1: 2 times");
+    ui->comboBox_AvgRange->addItem("2: 4 times");
+    ui->comboBox_AvgRange->addItem("3: 8 times");
+    ui->comboBox_AvgRange->addItem("4: 16 times");
+    ui->comboBox_AvgRange->addItem("5: 32 times");
+    ui->comboBox_AvgRange->addItem("6: 64 times");
+    ui->comboBox_AvgRange->setCurrentIndex(0);
+
+    ui->comboBox_Conversion->addItem("0: 200 kHz");
+    ui->comboBox_Conversion->addItem("1: 100 kHz");
+    ui->comboBox_Conversion->addItem("2: 50 kHz");
+    ui->comboBox_Conversion->addItem("3: 25 kHz");
+    ui->comboBox_Conversion->addItem("4: 12.5 kHz");
+    ui->comboBox_Conversion->addItem("5: 6.25 kHz");
+    ui->comboBox_Conversion->addItem("6: 3.125 kHz");
+    ui->comboBox_Conversion->setCurrentIndex(0);
+
+    gModeOri[0] = -5;
+    gModeOri[1] = -10;
+
+    gModeLength[0] = 10;
+    gModeLength[1] = 20;
+
+    connect(ui->comboBox_ADChannel, SIGNAL(currentIndexChanged(int)), this, SLOT(On_comboBox_ADChannel_currentIndexChanged(int)));
+    connect(ui->comboBox_ADMode, SIGNAL(currentIndexChanged(int)), this, SLOT(On_comboBox_ADMode_currentIndexChanged(int)));
+    connect(ui->comboBox_AvgRange, SIGNAL(currentIndexChanged(int)), this, SLOT(On_comboBox_AvgRange_currentIndexChanged(int)));
+    connect(ui->comboBox_Conversion, SIGNAL(currentIndexChanged(int)), this, SLOT(On_comboBox_Conversion_currentIndexChanged(int)));
+
+    
+    connect(ui->comboBox_CardNum, SIGNAL(currentIndexChanged(int)), this, SLOT(On_comboBox_CardNum_currentIndexChanged(int)));
+
+	ReadCalibration();
+
+    m_timer.setInterval(200);
+    connect(&m_timer, SIGNAL(timeout()), this, SLOT(On_timer_timeout()));
+    m_timer.start();
+
+
+	connect(ui->pushButton_startsim, SIGNAL(clicked()), this, SLOT(On_pushButton_startsim_clicked()));
+	connect(ui->pushButton_endsim, SIGNAL(clicked()), this, SLOT(On_pushButton_endsim_clicked()));
+	ui->label_CountDown_simsun->setText("00:00:60 000");
+	connect(&elapsedTimer, SIGNAL(timeout()), this, SLOT(On_elapsedTimer_timeout()));
+
+	ui->widget_GRscreen->setScreenType(1);
+	connect(ui->comboBox_screenType, SIGNAL(currentIndexChanged(int)), this, SLOT(On_comboBox_screenType_currentIndexChanged(int)));
+
+
+
+
+	/***************************************9轴传感器***************************************************/
+	connect(ui->pushButton_connect, SIGNAL(clicked()), this, SLOT(On_pushButton_connect_clicked()));
+	connect(ui->pushButton_discon, SIGNAL(clicked()), this, SLOT(On_pushButton_discon_clicked()));
+	connect(ui->pushButton_setReturnContent, SIGNAL(clicked()), this, SLOT(On_pushButton_setReturnContent_clicked()));
+	connect(ui->pushButton_setReturnFreq, SIGNAL(clicked()), this, SLOT(On_pushButton_setReturnFreq_clicked()));
+	/***************************************9轴传感器***************************************************/
+
+	/***************************************模拟绘制表盘***************************************************/
+	connect(ui->horizontalSlider, SIGNAL(valueChanged(int)), this, SLOT(On_horizontalSlider_valueChanged(int)));
+	connect(ui->horizontalSlider_2, SIGNAL(valueChanged(int)), this, SLOT(On_horizontalSlider_2_valueChanged(int)));
+	/***************************************模拟绘制表盘***************************************************/
+
+	/***************************************点移动***************************************************/
+	connect(ui->lineEdit_ptmove_x, SIGNAL(textEdited(const QString&)), this, SLOT(On_lineEdit_ptmove_x_textEdited(const QString&)));
+	connect(ui->lineEdit_ptmove_y, SIGNAL(textEdited(const QString&)), this, SLOT(On_lineEdit_ptmove_y_textEdited(const QString&)));
+
+	connect(ui->pushButton_ptmove_start, SIGNAL(clicked()), this, SLOT(On_pushButton_ptmove_start_clicked()));
+	connect(ui->pushButton_ptmove_palse, SIGNAL(clicked()), this, SLOT(On_pushButton_ptmove_palse_clicked()));
+	connect(ui->pushButton_ptmove_reset, SIGNAL(clicked()), this, SLOT(On_pushButton_ptmove_reset_clicked()));
+	/***************************************点移动***************************************************/
+}
+
+void SphereBalanceTool::GetAllDataOneTime(F64& value1, F64& value2, F64& value3, F64& value4, F64& value5, F64& value6, F64& value7, F64& value8, bool isCalibration)
+{
+	I16 rt;
+	F64 Value1 = 0;
+	F64 Value2 = 0;
+	F64 Value3 = 0;
+	F64 Value4 = 0;
+	F64 fValue1 = 0;
+	F64 fValue2 = 0;
+	F64 fValue3 = 0;
+	F64 fValue4 = 0;
+
+	F64 Value5 = 0;
+	F64 Value6 = 0;
+	F64 Value7 = 0;
+	F64 Value8 = 0;
+	F64 fValue5 = 0;
+	F64 fValue6 = 0;
+	F64 fValue7 = 0;
+	F64 fValue8 = 0;
+
+	I32 IndexMode = 0;
+	F64 TempData = 0;
+	QString xx;
+
+	{
+		IndexMode = ui->comboBox_ADMode->currentIndex();
+		//dizuo
+		{
+			rt = _ECAT_Slave_R1_EC8124_Get_Input_Value(gESCCardNo, gNodeID, 0, 0, &Value1);
+			if (rt == 0)
+			{
+				TempData = 0;
+				if (gRevisionNo == 0x100000)
+				{
+					TempData = Value1;
+					TempData += 0x8000;
+
+					if (TempData >= 0x10000)
+						TempData -= 0x10000;
+				}
+
+				TempData = gModeOri[IndexMode] + (TempData * gModeLength[IndexMode] / 0xFFFF);
+			}
+			rt = _ECAT_Slave_R1_EC8124_Get_Input_Value(gESCCardNo, gNodeID, 1, 0, &Value2);
+			if (rt == 0)
+			{
+				TempData = 0;
+				if (gRevisionNo == 0x100000)
+				{
+					TempData = Value2;
+					TempData += 0x8000;
+
+					if (TempData >= 0x10000)
+						TempData -= 0x10000;
+				}
+
+				TempData = gModeOri[IndexMode] + (TempData * gModeLength[IndexMode] / 0xFFFF);
+			}
+			rt = _ECAT_Slave_R1_EC8124_Get_Input_Value(gESCCardNo, gNodeID, 2, 0, &Value3);
+			if (rt == 0)
+			{
+				TempData = 0;
+				if (gRevisionNo == 0x100000)
+				{
+					TempData = Value3;
+					TempData += 0x8000;
+
+					if (TempData >= 0x10000)
+						TempData -= 0x10000;
+				}
+
+				TempData = gModeOri[IndexMode] + (TempData * gModeLength[IndexMode] / 0xFFFF);
+			}
+			rt = _ECAT_Slave_R1_EC8124_Get_Input_Value(gESCCardNo, gNodeID, 3, 0, &Value4);
+			if (rt == 0)
+			{
+				TempData = 0;
+				if (gRevisionNo == 0x100000)
+				{
+					TempData = Value4;
+					TempData += 0x8000;
+
+					if (TempData >= 0x10000)
+						TempData -= 0x10000;
+				}
+
+				TempData = gModeOri[IndexMode] + (TempData * gModeLength[IndexMode] / 0xFFFF);
+			}
+
+			fValue1 = Value1; // a传感器
+			fValue2 = Value2; // b传感器
+			fValue3 = Value3; // c传感器
+			fValue4 = Value4; // d传感器
+
+			// 底座
+			fValue1 = (fValue1 / 5 * 200) * baseA_K + baseA_B;
+			fValue2 = (fValue2 / 5 * 200) * baseB_K + baseB_B;
+			fValue3 = (fValue3 / 5 * 200) * baseC_K + baseC_B;
+			fValue4 = (fValue4 / 5 * 200) * baseD_K + baseD_B;
+
+			double tmpf1 = k1 * (fValue1 + fValue2 + fValue3 + fValue4) + b1;
+			tmpf1 = k2 * tmpf1 + b2;
+
+			double tmpks = tmpf1 / (fValue1 + fValue2 + fValue3 + fValue4);
+			fValue1 = fValue1 * tmpks;
+			fValue2 = fValue2 * tmpks;
+			fValue3 = fValue3 * tmpks;
+			fValue4 = fValue4 * tmpks;
+
+			if (isCalibration)
+			{
+				ui->lineEdit_data1->setText(QString("Ev:%1 -> Calibration:%2").arg(QString::number(Value1, 'f', 3)).arg(QString::number(fValue1, 'f', 3)));
+				ui->lineEdit_data2->setText(QString("Ev:%1 -> Calibration:%2").arg(QString::number(Value2, 'f', 3)).arg(QString::number(fValue2, 'f', 3)));
+				ui->lineEdit_data3->setText(QString("Ev:%1 -> Calibration:%2").arg(QString::number(Value3, 'f', 3)).arg(QString::number(fValue3, 'f', 3)));
+				ui->lineEdit_data4->setText(QString("Ev:%1 -> Calibration:%2").arg(QString::number(Value4, 'f', 3)).arg(QString::number(fValue4, 'f', 3)));
+				value1 = fValue1;
+				value2 = fValue2;
+				value3 = fValue3;
+				value4 = fValue4;
+			}
+			else
+			{
+				ui->lineEdit_data1->setText(QString("Ev:%1 -> Weight:%2 | Power:%3").arg(QString::number(Value1, 'f', 3)).arg(QString::number(fValue1 - fCalibValue1, 'f', 1)).arg(QString::number((fValue1 - fCalibValue1)*9.8, 'f', 2)));
+				ui->lineEdit_data2->setText(QString("Ev:%1 -> Weight:%2 | Power:%3").arg(QString::number(Value2, 'f', 3)).arg(QString::number(fValue2 - fCalibValue2, 'f', 1)).arg(QString::number((fValue2 - fCalibValue2)*9.8, 'f', 2)));
+				ui->lineEdit_data3->setText(QString("Ev:%1 -> Weight:%2 | Power:%3").arg(QString::number(Value3, 'f', 3)).arg(QString::number(fValue3 - fCalibValue3, 'f', 1)).arg(QString::number((fValue3 - fCalibValue3)*9.8, 'f', 2)));
+				ui->lineEdit_data4->setText(QString("Ev:%1 -> Weight:%2 | Power:%3").arg(QString::number(Value4, 'f', 3)).arg(QString::number(fValue4 - fCalibValue4, 'f', 1)).arg(QString::number((fValue4 - fCalibValue4)*9.8, 'f', 2)));
+				value1 = fValue1-fCalibValue1;
+				value2 = fValue2-fCalibValue2;
+				value3 = fValue3-fCalibValue3;
+				value4 = fValue4-fCalibValue4;
+			}
+			
+		}
+
+		//zuoyi
+		{
+			rt = _ECAT_Slave_R1_EC8124_Get_Input_Value(gESCCardNo, gNodeID2, 0, 0, &Value5);
+			if (rt == 0)
+			{
+				TempData = 0;
+				if (gRevisionNo == 0x100000)
+				{
+					TempData = Value5;
+					TempData += 0x8000;
+
+					if (TempData >= 0x10000)
+						TempData -= 0x10000;
+				}
+
+				TempData = gModeOri[IndexMode] + (TempData * gModeLength[IndexMode] / 0xFFFF);
+			}
+			rt = _ECAT_Slave_R1_EC8124_Get_Input_Value(gESCCardNo, gNodeID2, 1, 0, &Value6);
+			if (rt == 0)
+			{
+				TempData = 0;
+				if (gRevisionNo == 0x100000)
+				{
+					TempData = Value6;
+					TempData += 0x8000;
+
+					if (TempData >= 0x10000)
+						TempData -= 0x10000;
+				}
+
+				TempData = gModeOri[IndexMode] + (TempData * gModeLength[IndexMode] / 0xFFFF);
+			}
+			rt = _ECAT_Slave_R1_EC8124_Get_Input_Value(gESCCardNo, gNodeID2, 2, 0, &Value7);
+			if (rt == 0)
+			{
+				TempData = 0;
+				if (gRevisionNo == 0x100000)
+				{
+					TempData = Value7;
+					TempData += 0x8000;
+
+					if (TempData >= 0x10000)
+						TempData -= 0x10000;
+				}
+
+				TempData = gModeOri[IndexMode] + (TempData * gModeLength[IndexMode] / 0xFFFF);
+			}
+			rt = _ECAT_Slave_R1_EC8124_Get_Input_Value(gESCCardNo, gNodeID2, 3, 0, &Value8);
+			if (rt == 0)
+			{
+				TempData = 0;
+				if (gRevisionNo == 0x100000)
+				{
+					TempData = Value8;
+					TempData += 0x8000;
+
+					if (TempData >= 0x10000)
+						TempData -= 0x10000;
+				}
+
+				TempData = gModeOri[IndexMode] + (TempData * gModeLength[IndexMode] / 0xFFFF);
+			}
+
+			fValue5 = Value5; // a传感器
+			fValue6 = Value6; // b传感器
+			fValue7 = Value7; // c传感器
+			fValue8 = Value8; // d传感器
+
+			// 座椅
+			fValue5 = (fValue5 / 5 * 200) * chairA_K + chairA_B;
+			fValue6 = (fValue6 / 5 * 200) * chairB_K + chairB_B;
+			fValue7 = (fValue7 / 5 * 200) * chairC_K + chairC_B;
+			fValue8 = (fValue8 / 5 * 200) * chairD_K + chairD_B;
+
+			double tmpf1 = k1 * (fValue5 + fValue6 + fValue7 + fValue8) + b1;
+			tmpf1 = k2 * tmpf1 + b2;
+
+			double tmpks = tmpf1 / (fValue5 + fValue6 + fValue7 + fValue8);
+			fValue5 = fValue5 * tmpks;
+			fValue6 = fValue6 * tmpks;
+			fValue7 = fValue7 * tmpks;
+			fValue8 = fValue8 * tmpks;
+
+			if (isCalibration)
+			{
+				ui->lineEdit_data5->setText(QString("Ev:%1 -> Calibration:%2").arg(QString::number(Value5, 'f', 3)).arg(QString::number(fValue5, 'f', 3)));
+				ui->lineEdit_data6->setText(QString("Ev:%1 -> Calibration:%2").arg(QString::number(Value6, 'f', 3)).arg(QString::number(fValue6, 'f', 3)));
+				ui->lineEdit_data7->setText(QString("Ev:%1 -> Calibration:%2").arg(QString::number(Value7, 'f', 3)).arg(QString::number(fValue7, 'f', 3)));
+				ui->lineEdit_data8->setText(QString("Ev:%1 -> Calibration:%2").arg(QString::number(Value8, 'f', 3)).arg(QString::number(fValue8, 'f', 3)));
+				value5 = fValue5;
+				value6 = fValue6;
+				value7 = fValue7;
+				value8 = fValue8;
+			}
+			else
+			{
+				ui->lineEdit_data5->setText(QString("Ev:%1 -> Weight:%2 | Power:%3").arg(QString::number(Value5, 'f', 3)).arg(QString::number(fValue5 - fCalibValue5, 'f', 1)).arg(QString::number((fValue5 - fCalibValue5)*9.8, 'f', 2)));
+				ui->lineEdit_data6->setText(QString("Ev:%1 -> Weight:%2 | Power:%3").arg(QString::number(Value6, 'f', 3)).arg(QString::number(fValue6 - fCalibValue6, 'f', 1)).arg(QString::number((fValue6 - fCalibValue6)*9.8, 'f', 2)));
+				ui->lineEdit_data7->setText(QString("Ev:%1 -> Weight:%2 | Power:%3").arg(QString::number(Value7, 'f', 3)).arg(QString::number(fValue7 - fCalibValue7, 'f', 1)).arg(QString::number((fValue7 - fCalibValue7)*9.8, 'f', 2)));
+				ui->lineEdit_data8->setText(QString("Ev:%1 -> Weight:%2 | Power:%3").arg(QString::number(Value8, 'f', 3)).arg(QString::number(fValue8 - fCalibValue8, 'f', 1)).arg(QString::number((fValue8 - fCalibValue8)*9.8, 'f', 2)));
+				value5 = fValue5-fCalibValue5;
+				value6 = fValue6-fCalibValue6;
+				value7 = fValue7-fCalibValue7;
+				value8 = fValue8-fCalibValue8;
+			}
+		}
+	}
+}
+
+void SphereBalanceTool::ReadCalibration()
+{
+	QString calibrationFilePath = "./calibration.ini";
+	QFileInfo file_info(calibrationFilePath);
+	if (!file_info.isFile()) {
+		QMessageBox::information(this, "tool information", "calibration.ini not exist!");
+		return;
+	}
+	QSettings setting(calibrationFilePath, QSettings::IniFormat);
+
+	fCalibValue1 = setting.value("/calibration/CalibValue1").toDouble();
+	fCalibValue2 = setting.value("/calibration/CalibValue2").toDouble();
+	fCalibValue3 = setting.value("/calibration/CalibValue3").toDouble();
+	fCalibValue4 = setting.value("/calibration/CalibValue4").toDouble();
+	fCalibValue5 = setting.value("/calibration/CalibValue5").toDouble();
+	fCalibValue6 = setting.value("/calibration/CalibValue6").toDouble();
+	fCalibValue7 = setting.value("/calibration/CalibValue7").toDouble();
+	fCalibValue8 = setting.value("/calibration/CalibValue8").toDouble();
+}

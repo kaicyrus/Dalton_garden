@@ -1,0 +1,179 @@
+#include "serialcommunication.h"
+#include <QtSerialPort/QSerialPortInfo>
+#include <QDebug>
+
+SerialCommunication::SerialCommunication(QObject *parent)
+    : QObject(parent)
+{
+    PortInit();
+}
+
+void SerialCommunication::PortInit()
+{
+    m_pSerialPort = QSharedPointer<QSerialPort>(new QSerialPort);
+
+    //获取可以用的串口
+//	QList<QSerialPortInfo> serialPortInfos = QSerialPortInfo::availablePorts();
+//	for (auto one_port : serialPortInfos)
+//	{
+//		m_pSerialPort->setPort(one_port);                      // 在对象中设置串口
+//		if (m_pSerialPort->open(QIODevice::ReadWrite))      // 以读写方式打开串口
+//		{
+//			m_pSerialPort->close();                        // 关闭
+//		}
+//		else
+//		{
+//			qDebug() << "串口打开失败，请重试";
+//		}
+//	}
+}
+
+bool SerialCommunication::PortOpen(Param param)
+{
+    if (m_pSerialPort->isOpen())
+    {
+        return true;
+    }
+    std::shared_ptr<Param> p = std::make_shared<Param>();
+    p->serialPortName = param.serialPortName;
+    p->baudRate = param.baudRate;//115200;
+    p->dataBits = (QSerialPort::DataBits)param.dataBits;//QSerialPort::Data8;
+    p->parity = (QSerialPort::Parity)param.parity;//QSerialPort::NoParity;
+    p->stopBits = param.stopBits;//QSerialPort::UnknownStopBits;
+    setParam(p.get());
+    bool isOpen = m_pSerialPort->open(QIODevice::ReadWrite);
+    return isOpen;
+}
+
+bool SerialCommunication::PortClose()
+{
+    m_pSerialPort->close();
+    return !m_pSerialPort->isOpen();
+}
+
+int SerialCommunication::PortWrite(char* buff, unsigned int length)
+{
+    int data_size = m_pSerialPort->write(buff, length);
+    m_pSerialPort->waitForBytesWritten(10000);
+    return data_size;
+}
+
+QByteArray SerialCommunication::sendSerialCommand(const QByteArray &command)
+{
+//    QEventLoop loop;
+//    QTimer run_timer_;
+//    // 设置定时器，超时时间为1000毫秒（1秒）
+//    run_timer_.setSingleShot(true); // 单次触发
+//    run_timer_.setInterval(1000);
+//    // 连接定时器超时信号到QEventLoop的quit槽
+//    QObject::connect(&run_timer_, &QTimer::timeout, &loop, &QEventLoop::quit);
+//    QByteArray response;
+//    response.append("RECEIVE OUT OF TIME");
+//    QMetaObject::Connection m_res;
+//    // 当有数据来自串口时，这个信号会被触发
+//    m_res = connect(this, &SerialCommunication::responseReceived,[&](const QByteArray &receivedData) {
+//        response = receivedData;
+//        loop.quit();
+//    });
+//    m_pSerialPort->write(command); // 发送命令
+//     // 启动定时器
+//    run_timer_.start();
+//    loop.exec(); // 进入事件循环，等待返回值
+//    disconnect(m_res);
+//    disconnect(m_pSerialPort.data());
+//    return response;
+
+    m_pSerialPort->write(command); // 发送命令
+    QByteArray response;
+    while (m_pSerialPort->waitForReadyRead(1))
+    {
+        QByteArray data = m_pSerialPort->readAll();
+        response.append(data);
+    }
+    if(response.size() <= 0)
+        response.append("RECEIVE OUT OF TIME");
+    return response;
+}
+
+// 1
+/*int SerialCommunication::PortRead(PortReadEnum _read_enum)
+{
+    // 关键代码获取回执消息时等待三秒未收到消息自动跳出循环qt自带函数无需自行实现
+    while (m_pSerialPort->waitForReadyRead(3000))
+    {
+        QByteArray data = m_pSerialPort->readAll();
+        if (data.size() <= 0)
+            return 0;
+        switch (_read_enum)
+        {
+        case SerialCommunication::ebpc:
+        case SerialCommunication::sdpc:
+            if (std::strstr(data.data(), "OK>"))
+                return 1;
+        case SerialCommunication::lbpc:
+            if (std::strstr(data.data(), "C"))
+                return 1;
+        case SerialCommunication::oneData:
+            if (data.at(0) == 0x06)
+                return 1;
+        default:
+            return 0;
+        }
+    }
+    return 0;
+}*/
+
+// 2
+/*int SerialCommunication::PortRead(PortReadEnum _read_enum)
+{
+    QByteArray data;
+    m_pSerialPort->waitForReadyRead(1);
+    if (m_pSerialPort->bytesAvailable()) {//判断串口缓存区内部是否存在数据，存在数据再将数据读出来
+        data = m_pSerialPort->readAll();
+        if (data.size() <= 0)
+            return 0;
+    }
+    return data;
+}*/
+
+void SerialCommunication::PortListen()
+{
+    connect(m_pSerialPort.data(), &QSerialPort::readyRead, this, [&]() {
+        QByteArray data = m_pSerialPort->readAll();
+        //setListenData(data); //缓存
+        //emit readyRead(data); //显示
+        qDebug() << data.data();
+        //addLogText(data.data());
+    });
+}
+
+int SerialCommunication::clearSendBuff()
+{
+    return m_pSerialPort->clear(QSerialPort::Output);
+}
+
+int SerialCommunication::clearRecvBuff()
+{
+    return m_pSerialPort->clear(QSerialPort::Input);
+}
+
+int SerialCommunication::setParam(void* param)
+{
+    Param* p = static_cast<Param*>(param);
+    m_pSerialPort->setPortName(p->serialPortName);
+    m_pSerialPort->setBaudRate(p->baudRate);
+    m_pSerialPort->setDataBits(p->dataBits);
+    m_pSerialPort->setParity(p->parity);
+    m_pSerialPort->setStopBits(p->stopBits);
+    return 0;
+}
+
+void SerialCommunication::onReadyRead()
+{
+    // 读取串口数据
+    QByteArray data = m_pSerialPort->readAll();
+    qDebug()<<data;
+    // 发送信号通知主线程
+    emit responseReceived(data);
+}
+

@@ -1,0 +1,37 @@
+#pragma once
+#include <QWidget>
+#include <QDateTime>
+#include <QPainter>
+class GRScreen : public QWidget
+{
+	Q_OBJECT
+
+public:
+	GRScreen(QWidget* parent = nullptr);
+	~GRScreen();
+
+	void setSpeed(int speed);
+	void setScreenType(int screenType);
+	void start(QDateTime starttime);
+	void stop();
+
+	// 入参：
+	// moveTotalDist：小太阳总共移动距离，两根起、终点线的内沿间距离-小太阳的宽度或高度（如果左右移动为宽度，上下移动为高度）
+	// speed：移动速度：3、2、1，即多少秒完成一趟移动
+	// timeDifference：当前距离起始时间的时间差
+	// 返回值：
+	// int: 距离起始点的距离，如果左右移动，起始点横坐标 + int；如果上下移动，起始点纵坐标 + int
+	// 返回值已带正负号，无须判断，直接使用 + 即可
+	int TargetMovingCal(int moveTotalDist, int speed, time_t timeDifference);
+
+protected:
+	void paintEvent(QPaintEvent* event);
+
+private:
+	int m_speed = 0;
+	int m_screentype = 0;
+	QString currentscreen;
+	QDateTime m_starttime;
+	bool startFlag = false;
+};
+

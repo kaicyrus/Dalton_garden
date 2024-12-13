@@ -1,0 +1,1874 @@
+#include "NingShiWidget.h"
+#include "ui_NingShiWidget.h"
+
+#include <QPixmap>
+#include <QRandomGenerator>
+#include <QKeyEvent>
+#include <QDebug>
+#include <QStyle>
+#include <QDateTime>
+#include <QPainter>
+#include <QTimer>
+
+NingShiWidget::NingShiWidget(QWidget *parent) :
+    QWidget(parent),
+    ui(new Ui::NingShiWidget)
+{
+    ui->setupUi(this);
+
+    Init();
+}
+
+NingShiWidget::~NingShiWidget()
+{
+    delete ui;
+}
+
+void NingShiWidget::Init()
+{
+    label_test = new QLabel(this);
+    label_test->setFixedSize(68, 68);
+    label_test->move(ui->label_testImage->pos().x() + 66, ui->label_testImage->pos().y() + 66);
+    label_test->hide();
+	label_test->setAlignment(Qt::AlignCenter);
+
+    ui->label_testImage->setPixmap(QPixmap(":/SphereBalanceTool/res/ningshi/testImageBack_normal.png"));
+
+    testTimer.setInterval(1000);
+    connect(&testTimer, SIGNAL(timeout()), this, SLOT(On_test_timer_timeout()));
+
+    restTimer.setInterval(1000);
+    connect(&restTimer, SIGNAL(timeout()), this, SLOT(On_rest_timer_timeout()));
+
+	testLogicTimer.setInterval(1);
+	connect(&testLogicTimer, SIGNAL(timeout()), this, SLOT(On_testlogic_timer_timeout()));
+    testLogicTimer.start();
+
+    connect(ui->pushButton_static_start, SIGNAL(clicked()), this, SLOT(On_pushButton_static_start_clicked()));
+
+    this->setFocusPolicy(Qt::StrongFocus);
+    this->installEventFilter(this);
+
+	connect(ui->lineEdit_staticview, SIGNAL(textEdited(const QString&)), this, SLOT(On_lineEdit_staticview_textEdited(const QString&)));
+
+    /**********************************************************************************************/
+    connect(ui->pushButton_clear, SIGNAL(clicked()), this, SLOT(On_pushButton_clear_clicked()));
+    connect(ui->pushButton_start_Pitch, SIGNAL(clicked()), this, SLOT(On_pushButton_start_Pitch_clicked()));
+    connect(ui->pushButton_start_Yaw, SIGNAL(clicked()), this, SLOT(On_pushButton_start_Yaw_clicked()));
+    connect(ui->pushButton_start_Roll, SIGNAL(clicked()), this, SLOT(On_pushButton_start_Roll_clicked()));
+	/**********************************************************************************************/
+
+	ui->widget_VelocityBorder->setStyleSheet("#widget_VelocityBorder{background:white; border: 1px solid black;}");
+	label_curVelocity = new QLabel(this);
+	label_curVelocity->setObjectName("label_curVelocity");
+	label_curVelocity->setFixedSize(0, 0);
+	label_curVelocity->hide();
+	label_curVelocity->setStyleSheet("#label_curVelocity,#label_curVelocity[status = 'low']{border:none; background:red;}#label_curVelocity[status = 'middle']{border:none; background:green;}#label_curVelocity[status = 'fast']{border:none; background:yellow;}");
+
+	label_reqVelocity = new QLabel(this);
+	label_reqVelocity->setObjectName("label_reqVelocity");
+	label_reqVelocity->setFixedSize(0, 0);
+	label_reqVelocity->hide();
+	label_reqVelocity->setStyleSheet("#label_reqVelocity{border:2px solid black; background:transparent;}");
+}
+
+void NingShiWidget::OnNotifySensorData(const SensorDataStruct& sensordata)
+{
+	// 不同项目准备不同的展示数据
+	QString direction;
+	if (In_Pitch)
+	{
+		if (sensordata.direction == 1)
+		{
+			direction = ", 方向：上";
+		}
+		else if (sensordata.direction == 2)
+		{
+			direction = ", 方向：下";
+		}
+		else
+		{
+			direction = ", 方向不明";
+		}
+
+		// 改变实时角速度条颜色
+		label_curVelocity->style()->unpolish(label_curVelocity);
+		if ((Req_Pitch_Direction_Up && Req_Pitch_AngVel_Up > sensordata.AngVelocity) ||
+			(!Req_Pitch_Direction_Up && Req_Pitch_AngVel_Down > sensordata.AngVelocity))
+		{
+			label_curVelocity->setProperty("status", "low");
+		}
+		if ((Req_Pitch_Direction_Up && Req_Pitch_AngVel_Up <= sensordata.AngVelocity
+			&& Req_Pitch_AngVel_Up + ui->comboBox_accelerateVelocity->currentText().toInt() >= sensordata.AngVelocity) ||
+			(!Req_Pitch_Direction_Up && Req_Pitch_AngVel_Down <= sensordata.AngVelocity
+				&& Req_Pitch_AngVel_Down + ui->comboBox_accelerateVelocity->currentText().toInt() >= sensordata.AngVelocity))
+		{
+			label_curVelocity->setProperty("status", "middle");
+		}
+		if ((Req_Pitch_Direction_Up && Req_Pitch_AngVel_Up + ui->comboBox_accelerateVelocity->currentText().toInt() < sensordata.AngVelocity) ||
+			(!Req_Pitch_Direction_Up && Req_Pitch_AngVel_Down + ui->comboBox_accelerateVelocity->currentText().toInt() < sensordata.AngVelocity))
+		{
+			label_curVelocity->setProperty("status", "fast");
+		}
+		label_curVelocity->style()->polish(label_curVelocity);
+		label_curVelocity->update();
+	}
+	if (In_Yaw)
+	{
+		if (sensordata.direction == 3)
+		{
+			direction = ", 方向：左";
+		}
+		else if (sensordata.direction == 4)
+		{
+			direction = ", 方向：右";
+		}
+		else
+		{
+			direction = ", 方向不明";
+		}
+
+		// 改变实时角速度条颜色
+		label_curVelocity->style()->unpolish(label_curVelocity);
+		if ((Req_Yaw_Direction_Left && Req_Yaw_AngVel_Left > sensordata.AngVelocity) ||
+			(!Req_Yaw_Direction_Left && Req_Yaw_AngVel_Right > sensordata.AngVelocity))
+		{
+			label_curVelocity->setProperty("status", "low");
+		}
+		if ((Req_Yaw_Direction_Left && Req_Yaw_AngVel_Left <= sensordata.AngVelocity
+			&& Req_Yaw_AngVel_Left + ui->comboBox_accelerateVelocity->currentText().toInt() >= sensordata.AngVelocity) ||
+			(!Req_Yaw_Direction_Left && Req_Yaw_AngVel_Right <= sensordata.AngVelocity
+				&& Req_Yaw_AngVel_Right + ui->comboBox_accelerateVelocity->currentText().toInt() >= sensordata.AngVelocity))
+		{
+			label_curVelocity->setProperty("status", "middle");
+		}
+		if ((Req_Yaw_Direction_Left && Req_Yaw_AngVel_Left + ui->comboBox_accelerateVelocity->currentText().toInt() < sensordata.AngVelocity) ||
+			(!Req_Yaw_Direction_Left && Req_Yaw_AngVel_Right + ui->comboBox_accelerateVelocity->currentText().toInt() < sensordata.AngVelocity))
+		{
+			label_curVelocity->setProperty("status", "fast");
+		}
+		label_curVelocity->style()->polish(label_curVelocity);
+		label_curVelocity->update();
+	}
+	if (In_Roll)
+	{
+		if (sensordata.direction == 5)
+		{
+			direction = ", 方向：左";
+		}
+		else if (sensordata.direction == 6)
+		{
+			direction = ", 方向：右";
+		}
+		else
+		{
+			direction = ", 方向不明";
+		}
+
+		// 改变实时角速度条颜色
+		label_curVelocity->style()->unpolish(label_curVelocity);
+		if ((Req_Roll_Direction_Left && Req_Roll_AngVel_Left > sensordata.AngVelocity) ||
+			(!Req_Roll_Direction_Left && Req_Roll_AngVel_Right > sensordata.AngVelocity))
+		{
+			label_curVelocity->setProperty("status", "low");
+		}
+		if ((Req_Roll_Direction_Left && Req_Roll_AngVel_Left <= sensordata.AngVelocity
+			&& Req_Roll_AngVel_Left + ui->comboBox_accelerateVelocity->currentText().toInt() >= sensordata.AngVelocity) ||
+			(!Req_Roll_Direction_Left && Req_Roll_AngVel_Right <= sensordata.AngVelocity
+				&& Req_Roll_AngVel_Right + ui->comboBox_accelerateVelocity->currentText().toInt() >= sensordata.AngVelocity))
+		{
+			label_curVelocity->setProperty("status", "middle");
+		}
+		if ((Req_Roll_Direction_Left && Req_Roll_AngVel_Left + ui->comboBox_accelerateVelocity->currentText().toInt() < sensordata.AngVelocity) ||
+			(!Req_Roll_Direction_Left && Req_Roll_AngVel_Right + ui->comboBox_accelerateVelocity->currentText().toInt() < sensordata.AngVelocity))
+		{
+			label_curVelocity->setProperty("status", "fast");
+		}
+		label_curVelocity->style()->polish(label_curVelocity);
+		label_curVelocity->update();
+	}
+
+    if (In_Pitch || In_Yaw || In_Roll)
+    {
+		// 展示当前传感器实时速度、方向
+        ui->lineEdit_curAngVel->setText(QString::number(sensordata.AngVelocity, 'f', 1) + direction);
+
+		// 展示实时速度条
+		double ratio = sensordata.AngVelocity / 200;
+		if (ratio > 1)
+		{
+			ratio = 1;
+		}
+		label_curVelocity->setFixedSize(ui->widget_VelocityBorder->width() * ratio-2, ui->widget_VelocityBorder->height()-2);
+		label_curVelocity->move(ui->widget_VelocityBorder->mapTo(this, QPoint(0, 0)).x() + 1, ui->widget_VelocityBorder->mapTo(this, QPoint(0, 0)).y() + 1);
+		label_curVelocity->show();
+
+		// 向队列中塞入传感器数据
+        cur_sensordata_mutex.lock();
+		if (cur_sensordata_queue.size() > 6)
+		{
+			cur_sensordata_queue.pop();
+		}
+		cur_sensordata_queue.push(sensordata);
+        cur_sensordata_mutex.unlock();
+    }
+}
+
+void NingShiWidget::On_test_timer_timeout()
+{
+    testTime--;
+    //测试倒计时完成
+    if (testTime == -1){
+        testTimer.stop();
+        In_test = false;
+        testTime = 20;
+        restTimer.start();
+    }
+    else {
+		//首次
+        if (testTime == 19)
+        {
+			//随机呈现一个方向的检测图
+			int randomnum = QRandomGenerator::global()->bounded(4);
+			while (randomnum + 1 == currentDirection)
+			{
+				randomnum = QRandomGenerator::global()->bounded(4);
+			}
+			switch (randomnum + 1)
+			{
+			case 1:
+				label_test->setPixmap(QPixmap(QString(":/SphereBalanceTool/res/ningshi/test_4_%1_r.png").arg(static_vision + 1)));
+				break;
+			case 2:
+				label_test->setPixmap(QPixmap(QString(":/SphereBalanceTool/res/ningshi/test_4_%1_u.png").arg(static_vision + 1)));
+				break;
+			case 3:
+				label_test->setPixmap(QPixmap(QString(":/SphereBalanceTool/res/ningshi/test_4_%1_l.png").arg(static_vision + 1)));
+				break;
+			case 4:
+				label_test->setPixmap(QPixmap(QString(":/SphereBalanceTool/res/ningshi/test_4_%1_d.png").arg(static_vision + 1)));
+				break;
+			default:
+				break;
+			}
+			
+            QPoint pos = ui->label_testImage->mapTo(this, QPoint(0, 0));
+			label_test->move(pos.x() + 66, pos.y() + 66);
+			label_test->show();
+            currentDirection = randomnum + 1;
+        }
+        ui->label_CountDown->setText(QString("倒计时:%1").arg(20 - testTime));
+    }
+}
+
+void NingShiWidget::On_rest_timer_timeout()
+{
+    restTime--;
+	//休息倒计时完成
+	if (restTime == -1) {
+        restTimer.stop();
+        restTime = 8;
+        testTimer.start();
+        In_test = true;
+	}
+	else {
+		ui->label_CountDown->setText(QString("休息倒计时:%1").arg(8 - restTime));
+        label_test->hide();
+	}
+}
+
+void NingShiWidget::On_testlogic_timer_timeout()
+{
+    if (In_test)
+    {
+        if (answered)
+        {
+			answered = false;
+			if (WrongTimeOnOneLevel == 2)
+			{
+				//如同停止测试
+				On_pushButton_static_start_clicked();
+				return;
+			}
+			//升等
+			if ((WrongTimeOnOneLevel == 0 && CorrectTimeOnOneLevel == 1) || (WrongTimeOnOneLevel == 1 && CorrectTimeOnOneLevel == 2))
+			{
+				static_vision++;
+				WrongTimeOnOneLevel = 0;
+				CorrectTimeOnOneLevel = 0;
+			}
+
+			ui->lineEdit_staticview->setText(QString::number(static_vision));
+			if (static_vision == 10)
+			{
+				//如同停止测试
+				On_pushButton_static_start_clicked();
+				return;
+			}
+			else
+			{
+				//随机呈现一个方向的检测图
+				int randomnum = QRandomGenerator::global()->bounded(4);
+				while (randomnum + 1 == currentDirection)
+				{
+					randomnum = QRandomGenerator::global()->bounded(4);
+				}
+				switch (randomnum + 1)
+				{
+				case 1:
+					label_test->setPixmap(QPixmap(QString(":/SphereBalanceTool/res/ningshi/test_4_%1_r.png").arg(static_vision + 1)));
+					break;
+				case 2:
+					label_test->setPixmap(QPixmap(QString(":/SphereBalanceTool/res/ningshi/test_4_%1_u.png").arg(static_vision + 1)));
+					break;
+				case 3:
+					label_test->setPixmap(QPixmap(QString(":/SphereBalanceTool/res/ningshi/test_4_%1_l.png").arg(static_vision + 1)));
+					break;
+				case 4:
+					label_test->setPixmap(QPixmap(QString(":/SphereBalanceTool/res/ningshi/test_4_%1_d.png").arg(static_vision + 1)));
+					break;
+				default:
+					break;
+				}
+				QPoint pos = ui->label_testImage->mapTo(this, QPoint(0, 0));
+				label_test->move(pos.x() + 66, pos.y() + 66);
+				label_test->show();
+				currentDirection = randomnum + 1;
+			}
+        }
+    }
+	
+    if (In_Pitch)
+    {
+		//获取传感器数据
+		SensorDataStruct cur_sensordata;
+		cur_sensordata_mutex.lock();
+		if (!cur_sensordata_queue.empty())
+		{
+			cur_sensordata.AngVelocity = cur_sensordata_queue.front().AngVelocity;
+			cur_sensordata.direction = cur_sensordata_queue.front().direction;
+			cur_sensordata.timestamp = cur_sensordata_queue.front().timestamp;
+			//qDebug() << "Get Current Time Pop " << QDateTime::currentDateTime().toString("hh:mm:ss.zzz")<<"; And cur_sensordata_queue.size():"<< cur_sensordata_queue.size();
+			cur_sensordata_queue.pop();
+		}
+		cur_sensordata_mutex.unlock();
+
+		//如果当前是还未显示测试图
+        if (!In_Pitch_CanAnswer && !In_Pitch_Show_TestPic)
+        {
+			// 设置本次要求的测试运动方向
+            if (Pitch_Up_Wrong_Time == 3 && Pitch_Down_Wrong_Time != 3)
+            {
+                Req_Pitch_Direction_Up = false;
+            }
+            if (Pitch_Up_Wrong_Time != 3 && Pitch_Down_Wrong_Time == 3)
+            {
+                Req_Pitch_Direction_Up = true;
+            }
+			if (Pitch_Up_Wrong_Time != 3 && Pitch_Down_Wrong_Time != 3)
+			{
+				Req_Pitch_Direction_Up = !last_Req_Pitch_Direction_Up;
+			}
+            if (Pitch_Up_Wrong_Time == 3 && Pitch_Down_Wrong_Time == 3)
+            {
+                //双向各产生3次错误则 结束
+                On_pushButton_start_Pitch_clicked();
+                return;
+            }
+
+			if (firstTime_In_LogicTimer)
+			{
+				firstTime_In_LogicTimer = false;
+				// 先显示1s的提示，再开启
+				In_Pitch = false;
+				ui->label_testImage->setPixmap(QPixmap(""));
+				if (Req_Pitch_Direction_Up)
+				{
+					ui->label_testImage->setText(QString("要求角速度：%1").arg(Req_Pitch_AngVel_Up));
+				}
+				else
+				{
+					ui->label_testImage->setText(QString("要求角速度：%1").arg(Req_Pitch_AngVel_Down));
+				}
+				QTimer::singleShot(1000, this, [=] {
+					if (ui->pushButton_start_Pitch->text() == "palse")
+					{
+						In_Pitch = true;
+					}
+					ui->label_testImage->setText("");
+					ui->label_testImage->setPixmap(QPixmap(":/SphereBalanceTool/res/ningshi/testImageBack_normal.png"));
+					});
+			}
+
+
+			//展示当前要求的速度和方向
+			if (Req_Pitch_Direction_Up)
+			{
+				ui->lineEdit_curReqAngVel->setText(QString::number(Req_Pitch_AngVel_Up) + ", 方向：上");
+			}
+			else
+			{
+				ui->lineEdit_curReqAngVel->setText(QString::number(Req_Pitch_AngVel_Down) + ", 方向：下");
+			}
+			// 展示当前要求的速度框
+			double Req_Pitch_AngVel = 0;
+			if (Req_Pitch_Direction_Up)
+			{
+				Req_Pitch_AngVel = Req_Pitch_AngVel_Up;
+			}
+			else
+			{
+				Req_Pitch_AngVel = Req_Pitch_AngVel_Down;
+			}
+			label_reqVelocity->setFixedSize(ui->widget_VelocityBorder->width() * (ui->comboBox_accelerateVelocity->currentText().toDouble() / 200.0),
+				ui->widget_VelocityBorder->height() + 6);
+			label_reqVelocity->move(ui->widget_VelocityBorder->mapTo(this, QPoint(0, 0)).x() + ui->widget_VelocityBorder->width() * (Req_Pitch_AngVel / 200.0),
+				ui->widget_VelocityBorder->mapTo(this, QPoint(0, 0)).y() - 3);
+			label_reqVelocity->show();
+			label_reqVelocity->raise();
+
+			//未获取到则返回
+			if (cur_sensordata.timestamp == 0)
+			{
+				return;
+			}
+
+			// 判断有没有连续同一个方向上的数据120个出现，则判断为出现了该方向上的运动
+			// 目的为当一个循环上的速度还没达到要求的速度时候，出现“加油加油”声音提示
+			if (cur_sensordata.direction == last_sensordata_direction && last_sensordata_direction != 0)
+			{
+				continue_on_one_direction++;
+			}
+			else
+			{
+				if (continue_on_one_direction >= 120)
+				{
+					if (last_move_direction != 0 && last_move_direction != last_sensordata_direction)
+					{
+						ui->textEdit_log->append("加油！加油！" + QDateTime::currentDateTime().toString("hh:mm:ss.zzz"));
+						last_move_direction = 0;
+					}
+					else
+					{
+						last_move_direction = last_sensordata_direction;
+					}
+				}
+				continue_on_one_direction = 0;
+			}
+			last_sensordata_direction = cur_sensordata.direction;
+			// 判断有没有达到要求的速度区间，达到了则重置出现“加油加油”提示的条件
+			if ((Req_Pitch_Direction_Up && Req_Pitch_AngVel_Up <= cur_sensordata.AngVelocity
+				&& Req_Pitch_AngVel_Up + ui->comboBox_accelerateVelocity->currentText().toInt() >= cur_sensordata.AngVelocity) ||
+				(!Req_Pitch_Direction_Up && Req_Pitch_AngVel_Down <= cur_sensordata.AngVelocity
+					&& Req_Pitch_AngVel_Down + ui->comboBox_accelerateVelocity->currentText().toInt() >= cur_sensordata.AngVelocity))
+			{
+				last_move_direction = 0;
+				continue_on_one_direction = 0;
+				last_sensordata_direction = 0;
+			}
+
+			// 判断是不是要求的运动方向
+            bool same_Pitch_Direction = false;
+            if ((Req_Pitch_Direction_Up && cur_sensordata.direction == 1) || (!Req_Pitch_Direction_Up && cur_sensordata.direction == 2))
+            {
+                same_Pitch_Direction = true;
+            }
+
+            // 判断有没有达到要求的速度区间
+            if ((Req_Pitch_Direction_Up && Req_Pitch_AngVel_Up  <= cur_sensordata.AngVelocity
+                && Req_Pitch_AngVel_Up + ui->comboBox_accelerateVelocity->currentText().toInt() >= cur_sensordata.AngVelocity
+                && same_Pitch_Direction) || 
+				(!Req_Pitch_Direction_Up && Req_Pitch_AngVel_Down <= cur_sensordata.AngVelocity
+					&& Req_Pitch_AngVel_Down + ui->comboBox_accelerateVelocity->currentText().toInt() >= cur_sensordata.AngVelocity
+					&& same_Pitch_Direction))
+            {
+                //开始显示随机测试图
+				//随机呈现一个方向的检测图
+				int randomnum = QRandomGenerator::global()->bounded(4);
+				int cur_test_vision = (static_vision - ui->comboBox_viewDescending->currentText().toInt() >= 0) ? static_vision - ui->comboBox_viewDescending->currentText().toInt() : 0;
+				switch (randomnum + 1)
+				{
+				case 1:
+					label_test->setPixmap(QPixmap(QString(":/SphereBalanceTool/res/ningshi/test_4_%1_r.png").arg(cur_test_vision)));
+					break;
+				case 2:
+					label_test->setPixmap(QPixmap(QString(":/SphereBalanceTool/res/ningshi/test_4_%1_u.png").arg(cur_test_vision)));
+					break;
+				case 3:
+					label_test->setPixmap(QPixmap(QString(":/SphereBalanceTool/res/ningshi/test_4_%1_l.png").arg(cur_test_vision)));
+					break;
+				case 4:
+					label_test->setPixmap(QPixmap(QString(":/SphereBalanceTool/res/ningshi/test_4_%1_d.png").arg(cur_test_vision)));
+					break;
+				default:
+					break;
+				}
+				currentDirection = randomnum + 1;
+				QPoint pos = ui->label_testImage->mapTo(this, QPoint(0, 0));
+				label_test->move(pos.x() + 66, pos.y() + 66);
+				label_test->show();
+				ui->label_testImage->setPixmap(QPixmap(":/SphereBalanceTool/res/ningshi/testImageBack_middle.png"));
+
+				//qDebug() << "Get Current Time Show TESTIAMGE " << QDateTime::currentDateTime().toString("hh:mm:ss.zzz");
+
+				//插入测试过程产生的传感器数据
+				pitch_data_map_id++;
+				GSTResultStruct tempResult;
+                std::vector<SensorDataStruct> tempVec;
+                tempVec.push_back(cur_sensordata);
+				tempResult.sensorDataList = tempVec;
+                pitch_data_map[pitch_data_map_id] = tempResult;
+
+                In_Pitch_Show_TestPic = true;
+				last_Req_Pitch_Direction_Up = Req_Pitch_Direction_Up;
+            }
+        }
+
+		//未获取到则返回
+		if (cur_sensordata.timestamp == 0)
+		{
+			return;
+		}
+		//如果测试图已经显示中
+        if (In_Pitch_Show_TestPic)
+        {
+			// 45ms以内始终保持展示“E”
+            if (cur_sensordata.timestamp != pitch_data_map[pitch_data_map_id].sensorDataList.back().timestamp &&
+				(cur_sensordata.timestamp - pitch_data_map[pitch_data_map_id].sensorDataList.front().timestamp) <= 45)
+            {
+                pitch_data_map[pitch_data_map_id].sensorDataList.push_back(cur_sensordata);
+
+				//变换测试图背景图
+				if ((Req_Pitch_Direction_Up && Req_Pitch_AngVel_Up > cur_sensordata.AngVelocity) ||
+					(!Req_Pitch_Direction_Up && Req_Pitch_AngVel_Down > cur_sensordata.AngVelocity))
+				{
+					ui->label_testImage->setPixmap(QPixmap(":/SphereBalanceTool/res/ningshi/testImageBack_low.png"));
+				}
+				if ((Req_Pitch_Direction_Up && Req_Pitch_AngVel_Up <= cur_sensordata.AngVelocity
+					&& Req_Pitch_AngVel_Up + ui->comboBox_accelerateVelocity->currentText().toInt() >= cur_sensordata.AngVelocity) ||
+					(!Req_Pitch_Direction_Up && Req_Pitch_AngVel_Down <= cur_sensordata.AngVelocity
+						&& Req_Pitch_AngVel_Down + ui->comboBox_accelerateVelocity->currentText().toInt() >= cur_sensordata.AngVelocity))
+				{
+					ui->label_testImage->setPixmap(QPixmap(":/SphereBalanceTool/res/ningshi/testImageBack_middle.png"));
+				}
+				if ((Req_Pitch_Direction_Up && Req_Pitch_AngVel_Up + ui->comboBox_accelerateVelocity->currentText().toInt() < cur_sensordata.AngVelocity) ||
+					(!Req_Pitch_Direction_Up && Req_Pitch_AngVel_Down + ui->comboBox_accelerateVelocity->currentText().toInt() < cur_sensordata.AngVelocity))
+				{
+					ui->label_testImage->setPixmap(QPixmap(":/SphereBalanceTool/res/ningshi/testImageBack_fast.png"));
+				}
+            }
+
+			//45ms~70ms需要考虑速度、方向展示“E”
+			if (cur_sensordata.timestamp != pitch_data_map[pitch_data_map_id].sensorDataList.back().timestamp 
+				&& (cur_sensordata.timestamp - pitch_data_map[pitch_data_map_id].sensorDataList.front().timestamp) > 45
+                && (cur_sensordata.timestamp - pitch_data_map[pitch_data_map_id].sensorDataList.front().timestamp) <= 70)
+			{
+				bool same_Pitch_Direction = false;
+				if ((Req_Pitch_Direction_Up && cur_sensordata.direction == 1) || (!Req_Pitch_Direction_Up && cur_sensordata.direction == 2))
+				{
+					same_Pitch_Direction = true;
+				}
+				if ((Req_Pitch_Direction_Up && Req_Pitch_AngVel_Up <= cur_sensordata.AngVelocity
+					&& Req_Pitch_AngVel_Up + ui->comboBox_accelerateVelocity->currentText().toInt() >= cur_sensordata.AngVelocity
+					&& same_Pitch_Direction) ||
+					(!Req_Pitch_Direction_Up && Req_Pitch_AngVel_Down <= cur_sensordata.AngVelocity
+						&& Req_Pitch_AngVel_Down + ui->comboBox_accelerateVelocity->currentText().toInt() >= cur_sensordata.AngVelocity
+						&& same_Pitch_Direction))
+                {
+                    pitch_data_map[pitch_data_map_id].sensorDataList.push_back(cur_sensordata);
+
+					//变换测试图背景图
+					ui->label_testImage->setPixmap(QPixmap(":/SphereBalanceTool/res/ningshi/testImageBack_middle.png"));
+                }
+                else
+                {
+                    label_test->hide();
+					//变换测试图背景图
+					ui->label_testImage->setPixmap(QPixmap(":/SphereBalanceTool/res/ningshi/testImageBack_normal.png"));
+					//qDebug() << "Get Current Time hIDE TESTIAMGE " << QDateTime::currentDateTime().toString("hh:mm:ss.zzz");
+                    In_Pitch_Show_TestPic = false;
+                    In_Pitch_CanAnswer = true;
+                }
+			}
+
+			//超过70ms不展示“E”
+            if (cur_sensordata.timestamp != pitch_data_map[pitch_data_map_id].sensorDataList.back().timestamp &&
+				(cur_sensordata.timestamp - pitch_data_map[pitch_data_map_id].sensorDataList.front().timestamp) > 70)
+            {
+				label_test->hide();
+				//变换测试图背景图
+				ui->label_testImage->setPixmap(QPixmap(":/SphereBalanceTool/res/ningshi/testImageBack_normal.png"));
+				//qDebug() << "Get Current Time hIDE TESTIAMGE 70 " << QDateTime::currentDateTime().toString("hh:mm:ss.zzz");
+				In_Pitch_Show_TestPic = false;
+                In_Pitch_CanAnswer = true;
+            }
+        }
+
+		if (In_Pitch_CanAnswer)
+		{
+			ui->lineEdit_curReqAngVel->setText("请回答测试方向");
+		}
+    }
+	else if (In_Yaw)
+	{
+		//获取传感器数据
+		SensorDataStruct cur_sensordata;
+		cur_sensordata_mutex.lock();
+		if (!cur_sensordata_queue.empty())
+		{
+			cur_sensordata.AngVelocity = cur_sensordata_queue.front().AngVelocity;
+			cur_sensordata.direction = cur_sensordata_queue.front().direction;
+			cur_sensordata.timestamp = cur_sensordata_queue.front().timestamp;
+			//qDebug() << "Get Current Time Pop " << QDateTime::currentDateTime().toString("hh:mm:ss.zzz")<<"; And cur_sensordata_queue.size():"<< cur_sensordata_queue.size();
+			cur_sensordata_queue.pop();
+		}
+		cur_sensordata_mutex.unlock();
+
+		//如果当前是还未显示测试图
+		if (!In_Yaw_CanAnswer && !In_Yaw_Show_TestPic)
+		{
+			// 设置本次要求的测试运动方向
+			if (Yaw_Left_Wrong_Time == 3 && Yaw_Right_Wrong_Time != 3)
+			{
+				Req_Yaw_Direction_Left = false;
+			}
+			if (Yaw_Left_Wrong_Time != 3 && Yaw_Right_Wrong_Time == 3)
+			{
+				Req_Yaw_Direction_Left = true;
+			}
+			if (Yaw_Left_Wrong_Time != 3 && Yaw_Right_Wrong_Time != 3)
+			{
+				Req_Yaw_Direction_Left = !last_Req_Yaw_Direction_Left;
+			}
+			if (Yaw_Left_Wrong_Time == 3 && Yaw_Right_Wrong_Time == 3)
+			{
+				//双向各产生3次错误则 结束
+				On_pushButton_start_Yaw_clicked();
+				return;
+			}
+
+			if (firstTime_In_LogicTimer)
+			{
+				firstTime_In_LogicTimer = false;
+				// 先显示1s的提示，再开启
+				In_Yaw = false;
+				ui->label_testImage->setPixmap(QPixmap(""));
+				if (Req_Yaw_Direction_Left)
+				{
+					ui->label_testImage->setText(QString("要求角速度：%1").arg(Req_Yaw_AngVel_Left));
+				}
+				else
+				{
+					ui->label_testImage->setText(QString("要求角速度：%1").arg(Req_Yaw_AngVel_Right));
+				}
+				QTimer::singleShot(1000, this, [=] {
+					if (ui->pushButton_start_Yaw->text() == "palse")
+					{
+						In_Yaw = true;
+					}
+					ui->label_testImage->setText("");
+					ui->label_testImage->setPixmap(QPixmap(":/SphereBalanceTool/res/ningshi/testImageBack_normal.png"));
+					});
+			}
+
+			//展示当前要求的速度和方向
+			if (Req_Yaw_Direction_Left)
+			{
+				ui->lineEdit_curReqAngVel->setText(QString::number(Req_Yaw_AngVel_Left) + ", 方向：左");
+			}
+			else
+			{
+				ui->lineEdit_curReqAngVel->setText(QString::number(Req_Yaw_AngVel_Right) + ", 方向：右");
+			}
+			// 展示当前要求的速度框
+			double Req_Yaw_AngVel = 0;
+			if (Req_Yaw_Direction_Left)
+			{
+				Req_Yaw_AngVel = Req_Yaw_AngVel_Left;
+			}
+			else
+			{
+				Req_Yaw_AngVel = Req_Yaw_AngVel_Right;
+			}
+			label_reqVelocity->setFixedSize(ui->widget_VelocityBorder->width() * (ui->comboBox_accelerateVelocity->currentText().toDouble() / 200.0),
+				ui->widget_VelocityBorder->height() + 6);
+			label_reqVelocity->move(ui->widget_VelocityBorder->mapTo(this, QPoint(0, 0)).x() + ui->widget_VelocityBorder->width() * (Req_Yaw_AngVel / 200.0),
+				ui->widget_VelocityBorder->mapTo(this, QPoint(0, 0)).y() - 3);
+			label_reqVelocity->show();
+			label_reqVelocity->raise();
+
+			//未获取到则返回
+			if (cur_sensordata.timestamp == 0)
+			{
+				return;
+			}
+
+			// 判断有没有连续同一个方向上的数据120个出现，则判断为出现了该方向上的运动
+			// 目的为当一个循环上的速度还没达到要求的速度时候，出现“加油加油”声音提示
+			if (cur_sensordata.direction == last_sensordata_direction && last_sensordata_direction != 0)
+			{
+				continue_on_one_direction++;
+			}
+			else
+			{
+				if (continue_on_one_direction >= 120)
+				{
+					if (last_move_direction != 0 && last_move_direction != last_sensordata_direction)
+					{
+						ui->textEdit_log->append("加油！加油！" + QDateTime::currentDateTime().toString("hh:mm:ss.zzz"));
+						last_move_direction = 0;
+					}
+					else
+					{
+						last_move_direction = last_sensordata_direction;
+					}
+				}
+				continue_on_one_direction = 0;
+			}
+			last_sensordata_direction = cur_sensordata.direction;
+			// 判断有没有达到要求的速度区间，达到了则重置出现“加油加油”提示的条件
+			if ((Req_Yaw_Direction_Left && Req_Yaw_AngVel_Left <= cur_sensordata.AngVelocity
+				&& Req_Yaw_AngVel_Left + ui->comboBox_accelerateVelocity->currentText().toInt() >= cur_sensordata.AngVelocity) ||
+				(!Req_Yaw_Direction_Left && Req_Yaw_AngVel_Right <= cur_sensordata.AngVelocity
+					&& Req_Yaw_AngVel_Right + ui->comboBox_accelerateVelocity->currentText().toInt() >= cur_sensordata.AngVelocity))
+			{
+				last_move_direction = 0;
+				continue_on_one_direction = 0;
+				last_sensordata_direction = 0;
+			}
+
+			// 判断是不是要求的运动方向
+			bool same_Yaw_Direction = false;
+			if ((Req_Yaw_Direction_Left && cur_sensordata.direction == 3) || (!Req_Yaw_Direction_Left && cur_sensordata.direction == 4))
+			{
+				same_Yaw_Direction = true;
+			}
+
+			// 判断有没有达到要求的速度区间
+			if ((Req_Yaw_Direction_Left && Req_Yaw_AngVel_Left <= cur_sensordata.AngVelocity
+				&& Req_Yaw_AngVel_Left + ui->comboBox_accelerateVelocity->currentText().toInt() >= cur_sensordata.AngVelocity
+				&& same_Yaw_Direction) ||
+				(!Req_Yaw_Direction_Left && Req_Yaw_AngVel_Right <= cur_sensordata.AngVelocity
+					&& Req_Yaw_AngVel_Right + ui->comboBox_accelerateVelocity->currentText().toInt() >= cur_sensordata.AngVelocity
+					&& same_Yaw_Direction))
+			{
+				//开始显示随机测试图
+				//随机呈现一个方向的检测图
+				int randomnum = QRandomGenerator::global()->bounded(4);
+				int cur_test_vision = (static_vision - ui->comboBox_viewDescending->currentText().toInt() >= 0) ? static_vision - ui->comboBox_viewDescending->currentText().toInt() : 0;
+				switch (randomnum + 1)
+				{
+				case 1:
+					label_test->setPixmap(QPixmap(QString(":/SphereBalanceTool/res/ningshi/test_4_%1_r.png").arg(cur_test_vision)));
+					break;
+				case 2:
+					label_test->setPixmap(QPixmap(QString(":/SphereBalanceTool/res/ningshi/test_4_%1_u.png").arg(cur_test_vision)));
+					break;
+				case 3:
+					label_test->setPixmap(QPixmap(QString(":/SphereBalanceTool/res/ningshi/test_4_%1_l.png").arg(cur_test_vision)));
+					break;
+				case 4:
+					label_test->setPixmap(QPixmap(QString(":/SphereBalanceTool/res/ningshi/test_4_%1_d.png").arg(cur_test_vision)));
+					break;
+				default:
+					break;
+				}
+				currentDirection = randomnum + 1;
+				QPoint pos = ui->label_testImage->mapTo(this, QPoint(0, 0));
+				label_test->move(pos.x() + 66, pos.y() + 66);
+				label_test->show();
+				ui->label_testImage->setPixmap(QPixmap(":/SphereBalanceTool/res/ningshi/testImageBack_middle.png"));
+
+				//qDebug() << "Get Current Time Show TESTIAMGE " << QDateTime::currentDateTime().toString("hh:mm:ss.zzz");
+
+				//插入测试过程产生的传感器数据
+				yaw_data_map_id++;
+				GSTResultStruct tempResult;
+				std::vector<SensorDataStruct> tempVec;
+				tempVec.push_back(cur_sensordata);
+				tempResult.sensorDataList = tempVec;
+				yaw_data_map[yaw_data_map_id] = tempResult;
+
+				In_Yaw_Show_TestPic = true;
+				last_Req_Yaw_Direction_Left = Req_Yaw_Direction_Left;
+			}
+		}
+
+		//未获取到则返回
+		if (cur_sensordata.timestamp == 0)
+		{
+			return;
+		}
+
+		//如果测试图已经显示中
+		if (In_Yaw_Show_TestPic)
+		{
+			// 45ms以内始终保持展示“E”
+			if (cur_sensordata.timestamp != yaw_data_map[yaw_data_map_id].sensorDataList.back().timestamp &&
+				(cur_sensordata.timestamp - yaw_data_map[yaw_data_map_id].sensorDataList.front().timestamp) <= 45)
+			{
+				yaw_data_map[yaw_data_map_id].sensorDataList.push_back(cur_sensordata);
+
+				//变换测试图背景图
+				if ((Req_Yaw_Direction_Left && Req_Yaw_AngVel_Left > cur_sensordata.AngVelocity) ||
+					(!Req_Yaw_Direction_Left && Req_Yaw_AngVel_Right > cur_sensordata.AngVelocity))
+				{
+					ui->label_testImage->setPixmap(QPixmap(":/SphereBalanceTool/res/ningshi/testImageBack_low.png"));
+				}
+				if ((Req_Yaw_Direction_Left && Req_Yaw_AngVel_Left <= cur_sensordata.AngVelocity
+					&& Req_Yaw_AngVel_Left + ui->comboBox_accelerateVelocity->currentText().toInt() >= cur_sensordata.AngVelocity) ||
+					(!Req_Yaw_Direction_Left && Req_Yaw_AngVel_Right <= cur_sensordata.AngVelocity
+						&& Req_Yaw_AngVel_Right + ui->comboBox_accelerateVelocity->currentText().toInt() >= cur_sensordata.AngVelocity))
+				{
+					ui->label_testImage->setPixmap(QPixmap(":/SphereBalanceTool/res/ningshi/testImageBack_middle.png"));
+				}
+				if ((Req_Yaw_Direction_Left && Req_Yaw_AngVel_Left + ui->comboBox_accelerateVelocity->currentText().toInt() < cur_sensordata.AngVelocity) ||
+					(!Req_Yaw_Direction_Left && Req_Yaw_AngVel_Right + ui->comboBox_accelerateVelocity->currentText().toInt() < cur_sensordata.AngVelocity))
+				{
+					ui->label_testImage->setPixmap(QPixmap(":/SphereBalanceTool/res/ningshi/testImageBack_fast.png"));
+				}
+			}
+
+			//45ms~70ms需要考虑速度、方向展示“E”
+			if (cur_sensordata.timestamp != yaw_data_map[yaw_data_map_id].sensorDataList.back().timestamp
+				&& (cur_sensordata.timestamp - yaw_data_map[yaw_data_map_id].sensorDataList.front().timestamp) > 45
+				&& (cur_sensordata.timestamp - yaw_data_map[yaw_data_map_id].sensorDataList.front().timestamp) <= 70)
+			{
+				bool same_Yaw_Direction = false;
+				if ((Req_Yaw_Direction_Left && cur_sensordata.direction == 3) || (!Req_Yaw_Direction_Left && cur_sensordata.direction == 4))
+				{
+					same_Yaw_Direction = true;
+				}
+				if ((Req_Yaw_Direction_Left && Req_Yaw_AngVel_Left <= cur_sensordata.AngVelocity
+					&& Req_Yaw_AngVel_Left + ui->comboBox_accelerateVelocity->currentText().toInt() >= cur_sensordata.AngVelocity
+					&& same_Yaw_Direction) ||
+					(!Req_Yaw_Direction_Left && Req_Yaw_AngVel_Right <= cur_sensordata.AngVelocity
+						&& Req_Yaw_AngVel_Right + ui->comboBox_accelerateVelocity->currentText().toInt() >= cur_sensordata.AngVelocity
+						&& same_Yaw_Direction))
+				{
+					yaw_data_map[yaw_data_map_id].sensorDataList.push_back(cur_sensordata);
+
+					//变换测试图背景图
+					ui->label_testImage->setPixmap(QPixmap(":/SphereBalanceTool/res/ningshi/testImageBack_middle.png"));
+				}
+				else
+				{
+					label_test->hide();
+					//变换测试图背景图
+					ui->label_testImage->setPixmap(QPixmap(":/SphereBalanceTool/res/ningshi/testImageBack_normal.png"));
+					//qDebug() << "Get Current Time hIDE TESTIAMGE " << QDateTime::currentDateTime().toString("hh:mm:ss.zzz");
+					In_Yaw_Show_TestPic = false;
+					In_Yaw_CanAnswer = true;
+				}
+			}
+
+			//超过70ms不展示“E”
+			if (cur_sensordata.timestamp != yaw_data_map[yaw_data_map_id].sensorDataList.back().timestamp &&
+				(cur_sensordata.timestamp - yaw_data_map[yaw_data_map_id].sensorDataList.front().timestamp) > 70)
+			{
+				label_test->hide();
+				//变换测试图背景图
+				ui->label_testImage->setPixmap(QPixmap(":/SphereBalanceTool/res/ningshi/testImageBack_normal.png"));
+				//qDebug() << "Get Current Time hIDE TESTIAMGE 70 " << QDateTime::currentDateTime().toString("hh:mm:ss.zzz");
+				In_Yaw_Show_TestPic = false;
+				In_Yaw_CanAnswer = true;
+			}
+		}
+
+		if (In_Yaw_CanAnswer)
+		{
+			ui->lineEdit_curReqAngVel->setText("请回答测试方向");
+		}
+	}
+	else if (In_Roll)
+	{
+		//获取传感器数据
+		SensorDataStruct cur_sensordata;
+		cur_sensordata_mutex.lock();
+		if (!cur_sensordata_queue.empty())
+		{
+			cur_sensordata.AngVelocity = cur_sensordata_queue.front().AngVelocity;
+			cur_sensordata.direction = cur_sensordata_queue.front().direction;
+			cur_sensordata.timestamp = cur_sensordata_queue.front().timestamp;
+			//qDebug() << "Get Current Time Pop " << QDateTime::currentDateTime().toString("hh:mm:ss.zzz")<<"; And cur_sensordata_queue.size():"<< cur_sensordata_queue.size();
+			cur_sensordata_queue.pop();
+		}
+		cur_sensordata_mutex.unlock();
+
+		//如果当前是还未显示测试图
+		if (!In_Roll_CanAnswer && !In_Roll_Show_TestPic)
+		{
+			// 设置本次要求的测试运动方向
+			if (Roll_Left_Wrong_Time == 3 && Roll_Right_Wrong_Time != 3)
+			{
+				Req_Roll_Direction_Left = false;
+			}
+			if (Roll_Left_Wrong_Time != 3 && Roll_Right_Wrong_Time == 3)
+			{
+				Req_Roll_Direction_Left = true;
+			}
+			if (Roll_Left_Wrong_Time != 3 && Roll_Right_Wrong_Time != 3)
+			{
+				Req_Roll_Direction_Left = !last_Req_Roll_Direction_Left;
+			}
+			if (Roll_Left_Wrong_Time == 3 && Roll_Right_Wrong_Time == 3)
+			{
+				//双向各产生3次错误则 结束
+				On_pushButton_start_Roll_clicked();
+				return;
+			}
+
+			if (firstTime_In_LogicTimer)
+			{
+				firstTime_In_LogicTimer = false;
+				// 先显示1s的提示，再开启
+				In_Roll = false;
+				ui->label_testImage->setPixmap(QPixmap(""));
+				if (Req_Roll_Direction_Left)
+				{
+					ui->label_testImage->setText(QString("要求角速度：%1").arg(Req_Roll_AngVel_Left));
+				}
+				else
+				{
+					ui->label_testImage->setText(QString("要求角速度：%1").arg(Req_Roll_AngVel_Right));
+				}
+				QTimer::singleShot(1000, this, [=] {
+					if (ui->pushButton_start_Roll->text() == "palse")
+					{
+						In_Roll = true;
+					}
+					ui->label_testImage->setText("");
+					ui->label_testImage->setPixmap(QPixmap(":/SphereBalanceTool/res/ningshi/testImageBack_normal.png"));
+					});
+			}
+
+			//展示当前要求的速度和方向
+			if (Req_Roll_Direction_Left)
+			{
+				ui->lineEdit_curReqAngVel->setText(QString::number(Req_Roll_AngVel_Left) + ", 方向：左");
+			}
+			else
+			{
+				ui->lineEdit_curReqAngVel->setText(QString::number(Req_Roll_AngVel_Right) + ", 方向：右");
+			}
+			// 展示当前要求的速度框
+			double Req_Roll_AngVel = 0;
+			if (Req_Roll_Direction_Left)
+			{
+				Req_Roll_AngVel = Req_Roll_AngVel_Left;
+			}
+			else
+			{
+				Req_Roll_AngVel = Req_Roll_AngVel_Right;
+			}
+			label_reqVelocity->setFixedSize(ui->widget_VelocityBorder->width() * (ui->comboBox_accelerateVelocity->currentText().toDouble() / 200.0),
+				ui->widget_VelocityBorder->height() + 6);
+			label_reqVelocity->move(ui->widget_VelocityBorder->mapTo(this, QPoint(0, 0)).x() + ui->widget_VelocityBorder->width() * (Req_Roll_AngVel / 200.0),
+				ui->widget_VelocityBorder->mapTo(this, QPoint(0, 0)).y() - 3);
+			label_reqVelocity->show();
+			label_reqVelocity->raise();
+
+			//未获取到则返回
+			if (cur_sensordata.timestamp == 0)
+			{
+				return;
+			}
+
+			// 判断有没有连续同一个方向上的数据120个出现，则判断为出现了该方向上的运动
+			// 目的为当一个循环上的速度还没达到要求的速度时候，出现“加油加油”声音提示
+			if (cur_sensordata.direction == last_sensordata_direction && last_sensordata_direction != 0)
+			{
+				continue_on_one_direction++;
+			}
+			else
+			{
+				if (continue_on_one_direction >= 120)
+				{
+					if (last_move_direction != 0 && last_move_direction != last_sensordata_direction)
+					{
+						ui->textEdit_log->append("加油！加油！" + QDateTime::currentDateTime().toString("hh:mm:ss.zzz"));
+						last_move_direction = 0;
+					}
+					else
+					{
+						last_move_direction = last_sensordata_direction;
+					}
+				}
+				continue_on_one_direction = 0;
+			}
+			last_sensordata_direction = cur_sensordata.direction;
+			// 判断有没有达到要求的速度区间，达到了则重置出现“加油加油”提示的条件
+			if ((Req_Roll_Direction_Left && Req_Roll_AngVel_Left <= cur_sensordata.AngVelocity
+				&& Req_Roll_AngVel_Left + ui->comboBox_accelerateVelocity->currentText().toInt() >= cur_sensordata.AngVelocity) ||
+				(!Req_Roll_Direction_Left && Req_Roll_AngVel_Right <= cur_sensordata.AngVelocity
+					&& Req_Roll_AngVel_Right + ui->comboBox_accelerateVelocity->currentText().toInt() >= cur_sensordata.AngVelocity))
+			{
+				last_move_direction = 0;
+				continue_on_one_direction = 0;
+				last_sensordata_direction = 0;
+			}
+
+			// 判断是不是要求的运动方向
+			bool same_Roll_Direction = false;
+			if ((Req_Roll_Direction_Left && cur_sensordata.direction == 5) || (!Req_Roll_Direction_Left && cur_sensordata.direction == 6))
+			{
+				same_Roll_Direction = true;
+			}
+
+			// 判断有没有达到要求的速度区间
+			if ((Req_Roll_Direction_Left && Req_Roll_AngVel_Left <= cur_sensordata.AngVelocity
+				&& Req_Roll_AngVel_Left + ui->comboBox_accelerateVelocity->currentText().toInt() >= cur_sensordata.AngVelocity
+				&& same_Roll_Direction) ||
+				(!Req_Roll_Direction_Left && Req_Roll_AngVel_Right <= cur_sensordata.AngVelocity
+					&& Req_Roll_AngVel_Right + ui->comboBox_accelerateVelocity->currentText().toInt() >= cur_sensordata.AngVelocity
+					&& same_Roll_Direction))
+			{
+				//开始显示随机测试图
+				//随机呈现一个方向的检测图
+				int randomnum = QRandomGenerator::global()->bounded(4);
+				int cur_test_vision = (static_vision - ui->comboBox_viewDescending->currentText().toInt() >= 0) ? static_vision - ui->comboBox_viewDescending->currentText().toInt() : 0;
+				switch (randomnum + 1)
+				{
+				case 1:
+					label_test->setPixmap(QPixmap(QString(":/SphereBalanceTool/res/ningshi/test_4_%1_r.png").arg(cur_test_vision)));
+					break;
+				case 2:
+					label_test->setPixmap(QPixmap(QString(":/SphereBalanceTool/res/ningshi/test_4_%1_u.png").arg(cur_test_vision)));
+					break;
+				case 3:
+					label_test->setPixmap(QPixmap(QString(":/SphereBalanceTool/res/ningshi/test_4_%1_l.png").arg(cur_test_vision)));
+					break;
+				case 4:
+					label_test->setPixmap(QPixmap(QString(":/SphereBalanceTool/res/ningshi/test_4_%1_d.png").arg(cur_test_vision)));
+					break;
+				default:
+					break;
+				}
+				currentDirection = randomnum + 1;
+				QPoint pos = ui->label_testImage->mapTo(this, QPoint(0, 0));
+				label_test->move(pos.x() + 66, pos.y() + 66);
+				label_test->show();
+				ui->label_testImage->setPixmap(QPixmap(":/SphereBalanceTool/res/ningshi/testImageBack_middle.png"));
+
+				//qDebug() << "Get Current Time Show TESTIAMGE " << QDateTime::currentDateTime().toString("hh:mm:ss.zzz");
+
+				//插入测试过程产生的传感器数据
+				roll_data_map_id++;
+				GSTResultStruct tempResult;
+				std::vector<SensorDataStruct> tempVec;
+				tempVec.push_back(cur_sensordata);
+				tempResult.sensorDataList = tempVec;
+				roll_data_map[roll_data_map_id] = tempResult;
+
+				In_Roll_Show_TestPic = true;
+				last_Req_Roll_Direction_Left = Req_Roll_Direction_Left;
+			}
+		}
+		//未获取到则返回
+		if (cur_sensordata.timestamp == 0)
+		{
+			return;
+		}
+		//如果测试图已经显示中
+		if (In_Roll_Show_TestPic)
+		{
+			// 45ms以内始终保持展示“E”
+			if (cur_sensordata.timestamp != roll_data_map[roll_data_map_id].sensorDataList.back().timestamp &&
+				(cur_sensordata.timestamp - roll_data_map[roll_data_map_id].sensorDataList.front().timestamp) <= 45)
+			{
+				roll_data_map[roll_data_map_id].sensorDataList.push_back(cur_sensordata);
+
+				//变换测试图背景图
+				if ((Req_Roll_Direction_Left && Req_Roll_AngVel_Left > cur_sensordata.AngVelocity) ||
+					(!Req_Roll_Direction_Left && Req_Roll_AngVel_Right > cur_sensordata.AngVelocity))
+				{
+					ui->label_testImage->setPixmap(QPixmap(":/SphereBalanceTool/res/ningshi/testImageBack_low.png"));
+				}
+				if ((Req_Roll_Direction_Left && Req_Roll_AngVel_Left <= cur_sensordata.AngVelocity
+					&& Req_Roll_AngVel_Left + ui->comboBox_accelerateVelocity->currentText().toInt() >= cur_sensordata.AngVelocity) ||
+					(!Req_Roll_Direction_Left && Req_Roll_AngVel_Right <= cur_sensordata.AngVelocity
+						&& Req_Roll_AngVel_Right + ui->comboBox_accelerateVelocity->currentText().toInt() >= cur_sensordata.AngVelocity))
+				{
+					ui->label_testImage->setPixmap(QPixmap(":/SphereBalanceTool/res/ningshi/testImageBack_middle.png"));
+				}
+				if ((Req_Roll_Direction_Left && Req_Roll_AngVel_Left + ui->comboBox_accelerateVelocity->currentText().toInt() < cur_sensordata.AngVelocity) ||
+					(!Req_Roll_Direction_Left && Req_Roll_AngVel_Right + ui->comboBox_accelerateVelocity->currentText().toInt() < cur_sensordata.AngVelocity))
+				{
+					ui->label_testImage->setPixmap(QPixmap(":/SphereBalanceTool/res/ningshi/testImageBack_fast.png"));
+				}
+			}
+
+			//45ms~70ms需要考虑速度、方向展示“E”
+			if (cur_sensordata.timestamp != roll_data_map[roll_data_map_id].sensorDataList.back().timestamp
+				&& (cur_sensordata.timestamp - roll_data_map[roll_data_map_id].sensorDataList.front().timestamp) > 45
+				&& (cur_sensordata.timestamp - roll_data_map[roll_data_map_id].sensorDataList.front().timestamp) <= 70)
+			{
+				bool same_Roll_Direction = false;
+				if ((Req_Roll_Direction_Left && cur_sensordata.direction == 5) || (!Req_Roll_Direction_Left && cur_sensordata.direction == 6))
+				{
+					same_Roll_Direction = true;
+				}
+				if ((Req_Roll_Direction_Left && Req_Roll_AngVel_Left <= cur_sensordata.AngVelocity
+					&& Req_Roll_AngVel_Left + ui->comboBox_accelerateVelocity->currentText().toInt() >= cur_sensordata.AngVelocity
+					&& same_Roll_Direction) ||
+					(!Req_Roll_Direction_Left && Req_Roll_AngVel_Right <= cur_sensordata.AngVelocity
+						&& Req_Roll_AngVel_Right + ui->comboBox_accelerateVelocity->currentText().toInt() >= cur_sensordata.AngVelocity
+						&& same_Roll_Direction))
+				{
+					roll_data_map[roll_data_map_id].sensorDataList.push_back(cur_sensordata);
+
+					//变换测试图背景图
+					ui->label_testImage->setPixmap(QPixmap(":/SphereBalanceTool/res/ningshi/testImageBack_middle.png"));
+				}
+				else
+				{
+					label_test->hide();
+					//变换测试图背景图
+					ui->label_testImage->setPixmap(QPixmap(":/SphereBalanceTool/res/ningshi/testImageBack_normal.png"));
+					//qDebug() << "Get Current Time hIDE TESTIAMGE " << QDateTime::currentDateTime().toString("hh:mm:ss.zzz");
+					In_Roll_Show_TestPic = false;
+					In_Roll_CanAnswer = true;
+				}
+			}
+
+			//超过70ms不展示“E”
+			if (cur_sensordata.timestamp != roll_data_map[roll_data_map_id].sensorDataList.back().timestamp &&
+				(cur_sensordata.timestamp - roll_data_map[roll_data_map_id].sensorDataList.front().timestamp) > 70)
+			{
+				label_test->hide();
+				//变换测试图背景图
+				ui->label_testImage->setPixmap(QPixmap(":/SphereBalanceTool/res/ningshi/testImageBack_normal.png"));
+				//qDebug() << "Get Current Time hIDE TESTIAMGE 70 " << QDateTime::currentDateTime().toString("hh:mm:ss.zzz");
+				In_Roll_Show_TestPic = false;
+				In_Roll_CanAnswer = true;
+			}
+		}
+
+		if (In_Roll_CanAnswer)
+		{
+			ui->lineEdit_curReqAngVel->setText("请回答测试方向");
+		}
+	}
+	else
+	{
+		label_reqVelocity->hide();
+	}
+}
+
+void NingShiWidget::On_pushButton_static_start_clicked()
+{
+    if (ui->pushButton_static_start->text() == "start")
+    {
+        ui->pushButton_static_start->setText("palse");
+		restTime = 8;
+		testTime = 20;
+		testTimer.start();
+		In_test = true;
+    }
+    else
+    {
+        In_test = false;
+        restTimer.stop();
+        testTimer.stop();
+        ui->label_CountDown->setText(QString("倒计时:0"));
+        label_test->hide();
+		ui->pushButton_static_start->setText("start");
+		restTime = 8;
+		testTime = 20;
+		CorrectTimeOnOneLevel = 0;
+		WrongTimeOnOneLevel = 0;
+		currentDirection = 0; 
+        answered = false;
+    }
+}
+
+bool NingShiWidget::eventFilter(QObject* watched, QEvent* event)
+{
+    if (In_test && !answered)
+    {
+		if (event->type() == QEvent::KeyPress)
+		{
+			qDebug() << "press";
+            int pressedAnswer = 0;
+			QKeyEvent* keyevent = static_cast<QKeyEvent*>(event);
+			if (keyevent->key() == Qt::Key_Right)
+			{
+				qDebug() << "keyevent->key() == Qt::Key_Right";
+				pressedAnswer = 1;
+			}
+			if (keyevent->key() == Qt::Key_Up)
+			{
+				qDebug() << "keyevent->key() == Qt::Key_Up";
+				pressedAnswer = 2;
+			}
+			if (keyevent->key() == Qt::Key_Left)
+			{
+				qDebug() << "keyevent->key() == Qt::Key_Left";
+                pressedAnswer = 3;
+				//ui->bit0->setFocus();
+			}
+			if (keyevent->key() == Qt::Key_Down)
+			{
+				qDebug() << "keyevent->key() == Qt::Key_Down";
+                pressedAnswer = 4;
+			}
+			if (keyevent->key() == Qt::Key_5)
+			{
+				qDebug() << "keyevent->key() == Qt::Key_5";
+				pressedAnswer = 5;
+			}
+            
+            if (currentDirection != pressedAnswer && pressedAnswer != 0)
+            {
+                WrongTimeOnOneLevel++;
+                answered = true;
+            }
+
+            if (currentDirection == pressedAnswer)
+            {
+                CorrectTimeOnOneLevel++;
+                answered = true;
+            }
+		}
+    }
+
+	if (In_Pitch && In_Pitch_CanAnswer)
+	{
+		if (event->type() == QEvent::KeyPress)
+		{
+			int pressedAnswer = 0;
+			QKeyEvent* keyevent = static_cast<QKeyEvent*>(event);
+			if (keyevent->key() == Qt::Key_Right)
+			{
+				qDebug() << "keyevent->key() == Qt::Key_Right";
+				pressedAnswer = 1;
+			}
+			if (keyevent->key() == Qt::Key_Up)
+			{
+				qDebug() << "keyevent->key() == Qt::Key_Up";
+				pressedAnswer = 2;
+			}
+			if (keyevent->key() == Qt::Key_Left)
+			{
+				qDebug() << "keyevent->key() == Qt::Key_Left";
+				pressedAnswer = 3;
+			}
+			if (keyevent->key() == Qt::Key_Down)
+			{
+				qDebug() << "keyevent->key() == Qt::Key_Down";
+				pressedAnswer = 4;
+			}
+			if (keyevent->key() == Qt::Key_5)
+			{
+				qDebug() << "keyevent->key() == Qt::Key_5";
+				pressedAnswer = 5;
+			}
+
+			//回答错误
+			if (currentDirection != pressedAnswer && pressedAnswer != 0)
+			{
+				// 填充结果
+				QString testDatas = "测试数据<::>";
+				double testAngVel = 0;
+				for (int i = 0;i < pitch_data_map[pitch_data_map.size()].sensorDataList.size();++i)
+				{
+					testDatas.append("时间：" + QString::number(pitch_data_map[pitch_data_map.size()].sensorDataList[i].timestamp) + ", 速度：" + QString::number(pitch_data_map[pitch_data_map.size()].sensorDataList[i].AngVelocity, 'f', 0) + "; ");
+					testAngVel += pitch_data_map[pitch_data_map.size()].sensorDataList[i].AngVelocity;
+				}
+				testAngVel /= pitch_data_map[pitch_data_map.size()].sensorDataList.size();
+				if (pressedAnswer == 5)
+				{
+					pitch_data_map[pitch_data_map.size()].result = 2;
+				}
+				else
+				{
+					pitch_data_map[pitch_data_map.size()].result = 0;
+				}
+				pitch_data_map[pitch_data_map.size()].testAngVelocity = testAngVel;
+				pitch_data_map[pitch_data_map.size()].testDuration = pitch_data_map[pitch_data_map.size()].sensorDataList.back().timestamp - pitch_data_map[pitch_data_map.size()].sensorDataList.front().timestamp;
+
+				//区分不同方向的结果处理
+				if (Req_Pitch_Direction_Up)
+				{
+					Pitch_Up_Wrong_Time++;
+					
+					pitch_data_map[pitch_data_map.size()].targetDirection = 1;
+					pitch_data_map[pitch_data_map.size()].targetAngVelocity = Req_Pitch_AngVel_Up;
+					
+					ui->textEdit_pitch->append(QString("本次目标测试方向：上，目标速度：%1，测试速度：%2，测试结果：失败或未知！").arg(Req_Pitch_AngVel_Up).arg(testAngVel));
+					ui->textEdit_pitch->append(testDatas);
+
+					// 判断是不是第一次错误执行降档
+					if (Pitch_Up_Success_Time == 0)
+					{
+						Req_Pitch_AngVel_Up -= ui->comboBox_accelerateVelocity->currentText().toInt();
+						if (Req_Pitch_AngVel_Up < 10)
+						{
+							Req_Pitch_AngVel_Up = 10;
+						}
+					}
+				}
+				else
+				{
+					Pitch_Down_Wrong_Time++;
+
+					pitch_data_map[pitch_data_map.size()].targetDirection = 2;
+					pitch_data_map[pitch_data_map.size()].targetAngVelocity = Req_Pitch_AngVel_Down;
+				
+					ui->textEdit_pitch->append(QString("本次目标测试方向：下，目标速度：%1，测试速度：%2，测试结果：失败或未知！").arg(Req_Pitch_AngVel_Down).arg(testAngVel));
+					ui->textEdit_pitch->append(testDatas);
+
+					// 判断是不是第一次错误执行降档
+					if (Pitch_Down_Success_Time == 0)
+					{
+						Req_Pitch_AngVel_Down -= ui->comboBox_accelerateVelocity->currentText().toInt();
+						if (Req_Pitch_AngVel_Down < 10)
+						{
+							Req_Pitch_AngVel_Down = 10;
+						}
+					}
+				}
+				In_Pitch_CanAnswer = false;
+				firstTime_In_LogicTimer = true;
+			}
+			//回答正确
+			if (currentDirection == pressedAnswer)
+			{
+				// 填充结果
+				QString testDatas = "测试数据<::>";
+				double testAngVel = 0;
+				for (int i = 0;i < pitch_data_map[pitch_data_map.size()].sensorDataList.size();++i)
+				{
+					testDatas.append("时间：" + QString::number(pitch_data_map[pitch_data_map.size()].sensorDataList[i].timestamp) + ", 速度：" + QString::number(pitch_data_map[pitch_data_map.size()].sensorDataList[i].AngVelocity, 'f', 0) + "; ");
+					testAngVel += pitch_data_map[pitch_data_map.size()].sensorDataList[i].AngVelocity;
+				}
+				testAngVel /= pitch_data_map[pitch_data_map.size()].sensorDataList.size();
+				pitch_data_map[pitch_data_map.size()].result = 1;
+				pitch_data_map[pitch_data_map.size()].testAngVelocity = testAngVel;
+				pitch_data_map[pitch_data_map.size()].testDuration = pitch_data_map[pitch_data_map.size()].sensorDataList.back().timestamp - pitch_data_map[pitch_data_map.size()].sensorDataList.front().timestamp;
+
+				//区分不同方向的结果处理
+				if (Req_Pitch_Direction_Up)
+				{
+					Pitch_Up_Success_Time++;
+
+					pitch_data_map[pitch_data_map.size()].targetDirection = 1;
+					pitch_data_map[pitch_data_map.size()].targetAngVelocity = Req_Pitch_AngVel_Up;
+					
+					ui->lineEdit_pitchUpMax->setText(QString::number(testAngVel, 'f', 0));
+
+					ui->textEdit_pitch->append(QString("本次目标测试方向：上，目标速度：%1，测试速度：%2，测试结果：成功！").arg(Req_Pitch_AngVel_Up).arg(testAngVel));
+					ui->textEdit_pitch->append(testDatas);
+
+					// 升档
+					Req_Pitch_AngVel_Up += ui->comboBox_accelerateVelocity->currentText().toInt();
+				}
+				else
+				{
+					Pitch_Down_Success_Time++;
+
+					pitch_data_map[pitch_data_map.size()].targetDirection = 2;
+					pitch_data_map[pitch_data_map.size()].targetAngVelocity = Req_Pitch_AngVel_Down;
+
+					ui->lineEdit_pitchDownMax->setText(QString::number(testAngVel, 'f', 0));
+
+					ui->textEdit_pitch->append(QString("本次目标测试方向：下，目标速度：%1，测试速度：%2，测试结果：成功！").arg(Req_Pitch_AngVel_Down).arg(testAngVel));
+					ui->textEdit_pitch->append(testDatas);
+
+					// 升档
+					Req_Pitch_AngVel_Down += ui->comboBox_accelerateVelocity->currentText().toInt();
+				}
+				In_Pitch_CanAnswer = false;
+				firstTime_In_LogicTimer = true;
+			}
+		}
+	}
+
+	if (In_Yaw && In_Yaw_CanAnswer)
+	{
+		if (event->type() == QEvent::KeyPress)
+		{
+			int pressedAnswer = 0;
+			QKeyEvent* keyevent = static_cast<QKeyEvent*>(event);
+			if (keyevent->key() == Qt::Key_Right)
+			{
+				qDebug() << "keyevent->key() == Qt::Key_Right";
+				pressedAnswer = 1;
+			}
+			if (keyevent->key() == Qt::Key_Up)
+			{
+				qDebug() << "keyevent->key() == Qt::Key_Up";
+				pressedAnswer = 2;
+			}
+			if (keyevent->key() == Qt::Key_Left)
+			{
+				qDebug() << "keyevent->key() == Qt::Key_Left";
+				pressedAnswer = 3;
+			}
+			if (keyevent->key() == Qt::Key_Down)
+			{
+				qDebug() << "keyevent->key() == Qt::Key_Down";
+				pressedAnswer = 4;
+			}
+			if (keyevent->key() == Qt::Key_5)
+			{
+				qDebug() << "keyevent->key() == Qt::Key_5";
+				pressedAnswer = 5;
+			}
+
+			//回答错误
+			if (currentDirection != pressedAnswer && pressedAnswer != 0)
+			{
+				// 填充结果
+				QString testDatas = "测试数据<::>";
+				double testAngVel = 0;
+				for (int i = 0;i < yaw_data_map[yaw_data_map.size()].sensorDataList.size();++i)
+				{
+					testDatas.append("时间：" + QString::number(yaw_data_map[yaw_data_map.size()].sensorDataList[i].timestamp) + ", 速度：" + QString::number(yaw_data_map[yaw_data_map.size()].sensorDataList[i].AngVelocity, 'f', 0) + "; ");
+					testAngVel += yaw_data_map[yaw_data_map.size()].sensorDataList[i].AngVelocity;
+				}
+				testAngVel /= yaw_data_map[yaw_data_map.size()].sensorDataList.size();
+				if (pressedAnswer == 5)
+				{
+					yaw_data_map[yaw_data_map.size()].result = 2;
+				}
+				else
+				{
+					yaw_data_map[yaw_data_map.size()].result = 0;
+				}
+				yaw_data_map[yaw_data_map.size()].testAngVelocity = testAngVel;
+				yaw_data_map[yaw_data_map.size()].testDuration = yaw_data_map[yaw_data_map.size()].sensorDataList.back().timestamp - yaw_data_map[yaw_data_map.size()].sensorDataList.front().timestamp;
+
+				//区分不同方向的结果处理
+				if (Req_Yaw_Direction_Left)
+				{
+					Yaw_Left_Wrong_Time++;
+
+					yaw_data_map[yaw_data_map.size()].targetDirection = 3;
+					yaw_data_map[yaw_data_map.size()].targetAngVelocity = Req_Yaw_AngVel_Left;
+
+					ui->textEdit_yaw->append(QString("本次目标测试方向：左，目标速度：%1，测试速度：%2，测试结果：失败或未知！").arg(Req_Yaw_AngVel_Left).arg(testAngVel));
+					ui->textEdit_yaw->append(testDatas);
+
+					// 判断是不是第一次错误执行降档
+					if (Yaw_Left_Success_Time == 0)
+					{
+						Req_Yaw_AngVel_Left -= ui->comboBox_accelerateVelocity->currentText().toInt();
+						if (Req_Yaw_AngVel_Left < 10)
+						{
+							Req_Yaw_AngVel_Left = 10;
+						}
+					}
+				}
+				else
+				{
+					Yaw_Right_Wrong_Time++;
+
+					yaw_data_map[yaw_data_map.size()].targetDirection = 4;
+					yaw_data_map[yaw_data_map.size()].targetAngVelocity = Req_Yaw_AngVel_Right;
+
+					ui->textEdit_yaw->append(QString("本次目标测试方向：右，目标速度：%1，测试速度：%2，测试结果：失败或未知！").arg(Req_Yaw_AngVel_Right).arg(testAngVel));
+					ui->textEdit_yaw->append(testDatas);
+
+					// 判断是不是第一次错误执行降档
+					if (Yaw_Right_Success_Time == 0)
+					{
+						Req_Yaw_AngVel_Right -= ui->comboBox_accelerateVelocity->currentText().toInt();
+						if (Req_Yaw_AngVel_Right < 10)
+						{
+							Req_Yaw_AngVel_Right = 10;
+						}
+					}
+				}
+				In_Yaw_CanAnswer = false;
+				firstTime_In_LogicTimer = true;
+			}
+			//回答正确
+			if (currentDirection == pressedAnswer)
+			{
+				// 填充结果
+				QString testDatas = "测试数据<::>";
+				double testAngVel = 0;
+				for (int i = 0;i < yaw_data_map[yaw_data_map.size()].sensorDataList.size();++i)
+				{
+					testDatas.append("时间：" + QString::number(yaw_data_map[yaw_data_map.size()].sensorDataList[i].timestamp) + ", 速度：" + QString::number(yaw_data_map[yaw_data_map.size()].sensorDataList[i].AngVelocity, 'f', 0) + "; ");
+					testAngVel += yaw_data_map[yaw_data_map.size()].sensorDataList[i].AngVelocity;
+				}
+				testAngVel /= yaw_data_map[yaw_data_map.size()].sensorDataList.size();
+				yaw_data_map[yaw_data_map.size()].result = 1;
+				yaw_data_map[yaw_data_map.size()].testAngVelocity = testAngVel;
+				yaw_data_map[yaw_data_map.size()].testDuration = yaw_data_map[yaw_data_map.size()].sensorDataList.back().timestamp - yaw_data_map[yaw_data_map.size()].sensorDataList.front().timestamp;
+
+				//区分不同方向的结果处理
+				if (Req_Yaw_Direction_Left)
+				{
+					Yaw_Left_Success_Time++;
+
+					yaw_data_map[yaw_data_map.size()].targetDirection = 1;
+					yaw_data_map[yaw_data_map.size()].targetAngVelocity = Req_Yaw_AngVel_Left;
+
+					ui->lineEdit_yawLeftMax->setText(QString::number(testAngVel, 'f', 0));
+
+					ui->textEdit_yaw->append(QString("本次目标测试方向：左，目标速度：%1，测试速度：%2，测试结果：成功！").arg(Req_Yaw_AngVel_Left).arg(testAngVel));
+					ui->textEdit_yaw->append(testDatas);
+
+					// 升档
+					Req_Yaw_AngVel_Left += ui->comboBox_accelerateVelocity->currentText().toInt();
+				}
+				else
+				{
+					Yaw_Right_Success_Time++;
+
+					yaw_data_map[yaw_data_map.size()].targetDirection = 2;
+					yaw_data_map[yaw_data_map.size()].targetAngVelocity = Req_Yaw_AngVel_Right;
+
+					ui->lineEdit_yawRightMax->setText(QString::number(testAngVel, 'f', 0));
+
+					ui->textEdit_yaw->append(QString("本次目标测试方向：右，目标速度：%1，测试速度：%2，测试结果：成功！").arg(Req_Yaw_AngVel_Right).arg(testAngVel));
+					ui->textEdit_yaw->append(testDatas);
+
+					// 升档
+					Req_Yaw_AngVel_Right += ui->comboBox_accelerateVelocity->currentText().toInt();
+				}
+				In_Yaw_CanAnswer = false;
+				firstTime_In_LogicTimer = true;
+			}
+		}
+	}
+
+	if (In_Roll && In_Roll_CanAnswer)
+	{
+		if (event->type() == QEvent::KeyPress)
+		{
+			int pressedAnswer = 0;
+			QKeyEvent* keyevent = static_cast<QKeyEvent*>(event);
+			if (keyevent->key() == Qt::Key_Right)
+			{
+				qDebug() << "keyevent->key() == Qt::Key_Right";
+				pressedAnswer = 1;
+			}
+			if (keyevent->key() == Qt::Key_Up)
+			{
+				qDebug() << "keyevent->key() == Qt::Key_Up";
+				pressedAnswer = 2;
+			}
+			if (keyevent->key() == Qt::Key_Left)
+			{
+				qDebug() << "keyevent->key() == Qt::Key_Left";
+				pressedAnswer = 3;
+			}
+			if (keyevent->key() == Qt::Key_Down)
+			{
+				qDebug() << "keyevent->key() == Qt::Key_Down";
+				pressedAnswer = 4;
+			}
+			if (keyevent->key() == Qt::Key_5)
+			{
+				qDebug() << "keyevent->key() == Qt::Key_5";
+				pressedAnswer = 5;
+			}
+
+			//回答错误
+			if (currentDirection != pressedAnswer && pressedAnswer != 0)
+			{
+				// 填充结果
+				QString testDatas = "测试数据<::>";
+				double testAngVel = 0;
+				for (int i = 0;i < roll_data_map[roll_data_map.size()].sensorDataList.size();++i)
+				{
+					testDatas.append("时间：" + QString::number(roll_data_map[roll_data_map.size()].sensorDataList[i].timestamp) + ", 速度：" + QString::number(roll_data_map[roll_data_map.size()].sensorDataList[i].AngVelocity, 'f', 0) + "; ");
+					testAngVel += roll_data_map[roll_data_map.size()].sensorDataList[i].AngVelocity;
+				}
+				testAngVel /= roll_data_map[roll_data_map.size()].sensorDataList.size();
+				if (pressedAnswer == 5)
+				{
+					roll_data_map[roll_data_map.size()].result = 2;
+				}
+				else
+				{
+					roll_data_map[roll_data_map.size()].result = 0;
+				}
+				roll_data_map[roll_data_map.size()].testAngVelocity = testAngVel;
+				roll_data_map[roll_data_map.size()].testDuration = roll_data_map[roll_data_map.size()].sensorDataList.back().timestamp - roll_data_map[roll_data_map.size()].sensorDataList.front().timestamp;
+
+				//区分不同方向的结果处理
+				if (Req_Roll_Direction_Left)
+				{
+					Roll_Left_Wrong_Time++;
+
+					roll_data_map[roll_data_map.size()].targetDirection = 1;
+					roll_data_map[roll_data_map.size()].targetAngVelocity = Req_Roll_AngVel_Left;
+
+					ui->textEdit_roll->append(QString("本次目标测试方向：左，目标速度：%1，测试速度：%2，测试结果：失败或未知！").arg(Req_Roll_AngVel_Left).arg(testAngVel));
+					ui->textEdit_roll->append(testDatas);
+
+					// 判断是不是第一次错误执行降档
+					if (Roll_Left_Success_Time == 0)
+					{
+						Req_Roll_AngVel_Left -= ui->comboBox_accelerateVelocity->currentText().toInt();
+						if (Req_Roll_AngVel_Left < 10)
+						{
+							Req_Roll_AngVel_Left = 10;
+						}
+					}
+				}
+				else
+				{
+					Roll_Right_Wrong_Time++;
+
+					roll_data_map[roll_data_map.size()].targetDirection = 2;
+					roll_data_map[roll_data_map.size()].targetAngVelocity = Req_Roll_AngVel_Right;
+
+					ui->textEdit_roll->append(QString("本次目标测试方向：右，目标速度：%1，测试速度：%2，测试结果：失败或未知！").arg(Req_Roll_AngVel_Right).arg(testAngVel));
+					ui->textEdit_roll->append(testDatas);
+
+					// 判断是不是第一次错误执行降档
+					if (Roll_Right_Success_Time == 0)
+					{
+						Req_Roll_AngVel_Right -= ui->comboBox_accelerateVelocity->currentText().toInt();
+						if (Req_Roll_AngVel_Right < 10)
+						{
+							Req_Roll_AngVel_Right = 10;
+						}
+					}
+				}
+				In_Roll_CanAnswer = false;
+				firstTime_In_LogicTimer = true;
+			}
+			//回答正确
+			if (currentDirection == pressedAnswer)
+			{
+				// 填充结果
+				QString testDatas = "测试数据<::>";
+				double testAngVel = 0;
+				for (int i = 0;i < roll_data_map[roll_data_map.size()].sensorDataList.size();++i)
+				{
+					testDatas.append("时间：" + QString::number(roll_data_map[roll_data_map.size()].sensorDataList[i].timestamp) + ", 速度：" + QString::number(roll_data_map[roll_data_map.size()].sensorDataList[i].AngVelocity, 'f', 0) + "; ");
+					testAngVel += roll_data_map[roll_data_map.size()].sensorDataList[i].AngVelocity;
+				}
+				testAngVel /= roll_data_map[roll_data_map.size()].sensorDataList.size();
+				roll_data_map[roll_data_map.size()].result = 1;
+				roll_data_map[roll_data_map.size()].testAngVelocity = testAngVel;
+				roll_data_map[roll_data_map.size()].testDuration = roll_data_map[roll_data_map.size()].sensorDataList.back().timestamp - roll_data_map[roll_data_map.size()].sensorDataList.front().timestamp;
+
+				//区分不同方向的结果处理
+				if (Req_Roll_Direction_Left)
+				{
+					Roll_Left_Success_Time++;
+
+					roll_data_map[roll_data_map.size()].targetDirection = 1;
+					roll_data_map[roll_data_map.size()].targetAngVelocity = Req_Roll_AngVel_Left;
+
+					ui->lineEdit_rollLeftMax->setText(QString::number(testAngVel, 'f', 0));
+
+					ui->textEdit_roll->append(QString("本次目标测试方向：左，目标速度：%1，测试速度：%2，测试结果：成功！").arg(Req_Roll_AngVel_Left).arg(testAngVel));
+					ui->textEdit_roll->append(testDatas);
+
+					// 升档
+					Req_Roll_AngVel_Left += ui->comboBox_accelerateVelocity->currentText().toInt();
+				}
+				else
+				{
+					Roll_Right_Success_Time++;
+
+					roll_data_map[roll_data_map.size()].targetDirection = 2;
+					roll_data_map[roll_data_map.size()].targetAngVelocity = Req_Roll_AngVel_Right;
+
+					ui->lineEdit_rollRightMax->setText(QString::number(testAngVel, 'f', 0));
+
+					ui->textEdit_roll->append(QString("本次目标测试方向：右，目标速度：%1，测试速度：%2，测试结果：成功！").arg(Req_Roll_AngVel_Right).arg(testAngVel));
+					ui->textEdit_roll->append(testDatas);
+
+					// 升档
+					Req_Roll_AngVel_Right += ui->comboBox_accelerateVelocity->currentText().toInt();
+				}
+				In_Roll_CanAnswer = false;
+				firstTime_In_LogicTimer = true;
+			}
+		}
+	}
+	
+	return QObject::eventFilter(watched, event);
+}
+
+void NingShiWidget::On_pushButton_clear_clicked()
+{
+	ui->pushButton_clear->setText("clear");
+	ui->textEdit_log->clear();
+
+	ui->textEdit_pitch->clear();
+	pitch_data_map_id = 0;
+	pitch_data_map.clear();
+
+	ui->textEdit_yaw->clear();
+	yaw_data_map_id = 0;
+	yaw_data_map.clear();
+
+	ui->textEdit_roll->clear();
+	roll_data_map_id = 0;
+	roll_data_map.clear();
+}
+
+void NingShiWidget::On_pushButton_start_Pitch_clicked()
+{
+	if (ui->pushButton_start_Pitch->text() == "start")
+	{
+		ui->pushButton_start_Pitch->setText("palse");
+
+		last_Req_Pitch_Direction_Up = false;
+		Req_Pitch_Direction_Up = false;
+        Req_Pitch_AngVel_Up = ui->comboBox_originalVelocity->currentText().toInt();
+        Req_Pitch_AngVel_Down = ui->comboBox_originalVelocity->currentText().toInt();
+        Pitch_Up_Wrong_Time = 0;
+        Pitch_Down_Wrong_Time = 0;
+		Pitch_Up_Success_Time = 0;
+		Pitch_Down_Success_Time = 0;
+		In_Pitch_Show_TestPic = false;
+		In_Pitch_CanAnswer = false;
+
+		continue_on_one_direction = 0;
+		last_sensordata_direction = 0;
+		last_move_direction = 0;
+		firstTime_In_LogicTimer = true;
+
+		In_Pitch = true;
+	}
+	else
+	{
+		In_Pitch = false;
+		last_Req_Pitch_Direction_Up = false;
+		Req_Pitch_Direction_Up = false;
+		Req_Pitch_AngVel_Up = 0;
+		Req_Pitch_AngVel_Down = 0;
+		Pitch_Up_Wrong_Time = 0;
+		Pitch_Down_Wrong_Time = 0;
+		Pitch_Up_Success_Time = 0;
+		Pitch_Down_Success_Time = 0;
+		In_Pitch_Show_TestPic = false;
+		In_Pitch_CanAnswer = false;
+
+		continue_on_one_direction = 0;
+		last_sensordata_direction = 0;
+		last_move_direction = 0;
+		firstTime_In_LogicTimer = true;
+
+		label_test->hide();
+		ui->label_testImage->setPixmap(QPixmap(":/SphereBalanceTool/res/ningshi/testImageBack_normal.png"));
+		ui->pushButton_start_Pitch->setText("start");
+		ui->lineEdit_curAngVel->clear();
+		ui->lineEdit_curReqAngVel->clear();
+
+		currentDirection = 0;
+	}
+}
+
+void NingShiWidget::On_pushButton_start_Yaw_clicked()
+{
+	if (ui->pushButton_start_Yaw->text() == "start")
+	{
+		ui->pushButton_start_Yaw->setText("palse");
+
+		last_Req_Yaw_Direction_Left = false;
+		Req_Yaw_Direction_Left = false;
+		Req_Yaw_AngVel_Left = ui->comboBox_originalVelocity->currentText().toInt();
+		Req_Yaw_AngVel_Right = ui->comboBox_originalVelocity->currentText().toInt();
+		Yaw_Left_Wrong_Time = 0;
+		Yaw_Right_Wrong_Time = 0;
+		Yaw_Left_Success_Time = 0;
+		Yaw_Right_Success_Time = 0;
+		In_Yaw_Show_TestPic = false;
+		In_Yaw_CanAnswer = false;
+
+		continue_on_one_direction = 0;
+		last_sensordata_direction = 0;
+		last_move_direction = 0;
+		firstTime_In_LogicTimer = true;
+
+		In_Yaw = true;
+	}
+	else
+	{
+		In_Yaw = false;
+		last_Req_Yaw_Direction_Left = false;
+		Req_Yaw_Direction_Left = false;
+		Req_Yaw_AngVel_Left = 0;
+		Req_Yaw_AngVel_Right = 0;
+		Yaw_Left_Wrong_Time = 0;
+		Yaw_Right_Wrong_Time = 0;
+		Yaw_Left_Success_Time = 0;
+		Yaw_Right_Success_Time = 0;
+		In_Yaw_Show_TestPic = false;
+		In_Yaw_CanAnswer = false;
+
+		continue_on_one_direction = 0;
+		last_sensordata_direction = 0;
+		last_move_direction = 0;
+		firstTime_In_LogicTimer = true;
+
+		label_test->hide();
+		ui->label_testImage->setPixmap(QPixmap(":/SphereBalanceTool/res/ningshi/testImageBack_normal.png"));
+		ui->pushButton_start_Yaw->setText("start");
+		ui->lineEdit_curAngVel->clear();
+		ui->lineEdit_curReqAngVel->clear();
+
+		currentDirection = 0;
+	}
+}
+
+void NingShiWidget::On_pushButton_start_Roll_clicked()
+{
+	if (ui->pushButton_start_Roll->text() == "start")
+	{
+		ui->pushButton_start_Roll->setText("palse");
+
+		last_Req_Roll_Direction_Left = false;
+		Req_Roll_Direction_Left = false;
+		Req_Roll_AngVel_Left = ui->comboBox_originalVelocity->currentText().toInt();
+		Req_Roll_AngVel_Right = ui->comboBox_originalVelocity->currentText().toInt();
+		Roll_Left_Wrong_Time = 0;
+		Roll_Right_Wrong_Time = 0;
+		Roll_Left_Success_Time = 0;
+		Roll_Right_Success_Time = 0;
+		In_Roll_Show_TestPic = false;
+		In_Roll_CanAnswer = false;
+
+		continue_on_one_direction = 0;
+		last_sensordata_direction = 0;
+		last_move_direction = 0;
+		firstTime_In_LogicTimer = true;
+
+		In_Roll = true;
+	}
+	else
+	{
+		In_Roll = false;
+		last_Req_Roll_Direction_Left = false;
+		Req_Roll_Direction_Left = false;
+		Req_Roll_AngVel_Left = 0;
+		Req_Roll_AngVel_Right = 0;
+		Roll_Left_Wrong_Time = 0;
+		Roll_Right_Wrong_Time = 0;
+		Roll_Left_Success_Time = 0;
+		Roll_Right_Success_Time = 0;
+		In_Roll_Show_TestPic = false;
+		In_Roll_CanAnswer = false;
+
+		continue_on_one_direction = 0;
+		last_sensordata_direction = 0;
+		last_move_direction = 0;
+		firstTime_In_LogicTimer = true;
+
+		label_test->hide();
+		ui->label_testImage->setPixmap(QPixmap(":/SphereBalanceTool/res/ningshi/testImageBack_normal.png"));
+		ui->pushButton_start_Roll->setText("start");
+		ui->lineEdit_curAngVel->clear();
+		ui->lineEdit_curReqAngVel->clear();
+
+		currentDirection = 0;
+	}
+}
+
+void NingShiWidget::On_lineEdit_staticview_textEdited(const QString& text)
+{
+	static_vision = text.toInt();
+}

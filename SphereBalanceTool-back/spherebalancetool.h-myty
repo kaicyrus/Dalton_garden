@@ -1,0 +1,145 @@
+#ifndef SPHEREBALANCETOOL
+#define SPHEREBALANCETOOL
+
+#include "Windows.h"
+#include "EtherCAT_DLL.h"
+#include "EtherCAT_DLL_Err.h"
+#include "EtherCATWorker.h"
+//#include "Type_def.h"
+#include "commonDefine.h"
+#include "kmyserial.h"
+
+#include <QtWidgets/QMainWindow>
+#include <qtimer.h>
+#include <QDateTime>
+#include "WorkThread.h"
+#include "NingShiWidget.h"
+#include "ui_spherebalancetool.h"
+
+
+QT_BEGIN_NAMESPACE
+namespace Ui { class SphereBalanceToolClass; };
+QT_END_NAMESPACE
+
+class SphereBalanceTool : public QMainWindow
+{
+    Q_OBJECT
+
+public:
+    SphereBalanceTool(QWidget *parent = nullptr);
+    ~SphereBalanceTool();
+
+private slots:
+    void On_pushButton_InitCard_clicked();
+    void On_pushButton_FindSlave_clicked();
+    void On_pushButton_accurate_clicked();
+    void On_timer_timeout();
+
+    void On_comboBox_ADChannel_currentIndexChanged(int index);
+    void On_comboBox_ADMode_currentIndexChanged(int index);
+    void On_comboBox_AvgRange_currentIndexChanged(int index);
+    void On_comboBox_Conversion_currentIndexChanged(int index);
+
+    void On_comboBox_NodeID_currentIndexChanged(int index);
+    void On_comboBox_CardNum_currentIndexChanged(int index);
+
+    void On_lineEdit_myheight_textEdited(const QString& text);
+    void On_lineEdit_myweight_textEdited(const QString& text);
+
+    void On_pushButton_SitStandStart_clicked();
+    void On_pushButton_SitStandEstimate_clicked();
+
+	void On_pushButton_StepStart_clicked();
+	void On_pushButton_StepEstimate_clicked();
+
+    void On_sitstand_est_timer_timeout();
+    void On_step_est_timer_timeout();
+
+    void On_pushButton_test_clicked();
+
+    //模拟跟随重心运动
+    void On_pushButton_simMove_clicked();
+    void On_simMove_timer_timeout();
+
+
+    void On_pushButton_startsim_clicked();
+
+    void On_pushButton_endsim_clicked();
+
+    void On_elapsedTimer_timeout();
+    void On_comboBox_screenType_currentIndexChanged(int index);
+
+	/***************************************点移动***************************************************/
+	void On_lineEdit_ptmove_x_textEdited(const QString& text);
+	void On_lineEdit_ptmove_y_textEdited(const QString& text);
+    void On_pushButton_ptmove_start_clicked();
+    void On_pushButton_ptmove_palse_clicked();
+    void On_pushButton_ptmove_reset_clicked();
+	/***************************************点移动***************************************************/
+
+
+    /***************************************表盘绘制***************************************************/
+    void On_horizontalSlider_valueChanged(int value);
+    void On_horizontalSlider_2_valueChanged(int value);
+    /***************************************表盘绘制***************************************************/
+
+
+    /***************************************9轴传感器***************************************************/
+    void On_pushButton_connect_clicked();
+    void On_pushButton_discon_clicked();
+    void On_pushButton_setReturnContent_clicked();
+    void On_pushButton_setReturnFreq_clicked();
+
+public:
+    void SetV(double vx, double vy, double vz, int& direction, double& Velocity);
+    void SetD(double dx, double dy, double dz);
+
+    void NotifyNingshi(const SensorDataStruct& sensordata);
+    /***************************************9轴传感器***************************************************/
+private:
+    Ui::SphereBalanceToolClass *ui;
+    void Init();
+    void GetAllDataOneTime(F64 &value1, F64& value2, F64& value3, F64& value4, F64& value5, F64& value6, F64& value7, F64& value8,bool isCalibration = false);
+
+    void ReadCalibration();
+
+    QTimer m_timer;
+    bool isAccurated = false;
+
+	F64 fCalibValue1 = 0;
+	F64 fCalibValue2 = 0;
+	F64 fCalibValue3 = 0;
+	F64 fCalibValue4 = 0;
+
+	F64 fCalibValue5 = 0;
+	F64 fCalibValue6 = 0;
+	F64 fCalibValue7 = 0;
+	F64 fCalibValue8 = 0;
+
+
+    double myheight = 175;
+    double myweight = 85;
+
+
+	//站姿数据结构
+	std::vector<struct ZBDate> vec_buff;
+	//坐姿数据结构
+	std::vector<struct ZBDate> Sit_vec_buff;
+
+    bool in_sit_stand_estimate = false;
+    bool in_step_estimate = false;
+
+    QTimer simMoveTimer;
+    bool in_simmove = false;
+    bool firsttime_in_simmove = true;
+    ZBDate lastbuff;
+    ZBDate curbuff;
+
+    WorkThread* workthread = NULL;
+
+    QTimer elapsedTimer;
+    QDateTime starttime;
+
+    kmyserial m_KMySerial;
+};
+#endif // _DEBUG

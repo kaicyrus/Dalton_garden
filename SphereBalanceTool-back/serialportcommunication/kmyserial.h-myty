@@ -1,0 +1,79 @@
+#ifndef KMYSERIAL_H
+#define KMYSERIAL_H
+#include <QObject>
+#include <qthread.h>
+#include <QtSerialPort/QSerialPort>
+#include <QtSerialPort/QSerialPortInfo>
+#include <QMutex>
+#include "QMessageBox"
+//#include <synchapi.h>
+
+typedef int(*lpProcessRecvData)(unsigned char* RecvBuf,int RecvLen,void* lpUser);
+
+
+class kmyserial;
+//class KMySerialThread;
+
+class kmyserial:public QObject
+{
+    Q_OBJECT
+public:
+    explicit kmyserial();
+    ~kmyserial();
+
+
+public:
+    void* m_lpUser;
+    int Open(const char* portname,const char* strBPS,lpProcessRecvData pf=NULL);
+    int SendData(const char* buf,int len);
+    int Close();
+    int m_bRecvMutex;
+    QSerialPort my_serialPort;
+    int m_bSerialState;  //串口状态:  0 关闭 1打开
+    int m_nRecvLen;
+public slots:
+    void RecvData();
+private:
+    //KMySerialThread* m_MySerialThread;
+    QMutex  m_QMutex;
+    unsigned char m_RecvBuf[1024*50];
+    lpProcessRecvData recvcallback;
+    int Handlebuf(int retcallback);
+};
+
+/*class KMySerialThread : public QThread
+{
+    Q_OBJECT
+public:
+    explicit KMySerialThread(QThread *parent = 0)
+    {
+        m_KMySerial=NULL;
+        stopped = false;
+
+    }
+
+signals:
+
+public slots:
+
+   //
+public:
+    void stop()
+    {
+        stopped = true;
+    }
+
+    //Widget* m_pWidget;
+    KMySerial* m_KMySerial;
+    QMutex  m_QMutex;
+protected:
+    void run();
+
+
+private:
+    volatile bool stopped;//这里stopped变量使用了volatile关键字，这样可以使它在任何时候都保持最新的值，从而可以避免在多个线程中访问它时出错。
+};*/
+
+
+
+#endif // KMYSERIAL_H

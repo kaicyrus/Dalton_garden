@@ -1,0 +1,190 @@
+#include "DialWidget.h"
+#include <corecrt_math_defines.h>
+#include <QStyleOption>
+
+//表盘角度
+#define BIAOPANHUDU 40
+//表盘厚度
+#define BIAOPANHOUDU 0.9
+
+void GetCoodByDegree(const double degree, const double radius, double& cX, double& cY)
+{
+	if (degree < 0.000001 && degree > -0.000001)
+	{
+		cY = 0;
+		cX = radius / sqrt(tan(degree * M_PI / 180) * tan(degree * M_PI / 180) + 1);
+	}
+	if (degree > 0 && degree < 90)
+	{
+		cY = (radius * tan(degree * M_PI / 180)) / sqrt(tan(degree * M_PI / 180) * tan(degree * M_PI / 180) + 1);
+		cX = radius / sqrt(tan(degree * M_PI / 180) * tan(degree * M_PI / 180) + 1);
+	}
+	if (degree < 90.000001 && degree > 89.999999)
+	{
+		cY = radius;
+		cX = 0;
+	}
+	if (degree > 90 && degree < 180)
+	{
+		cY = -(radius * tan(degree * M_PI / 180)) / sqrt(tan(degree * M_PI / 180) * tan(degree * M_PI / 180) + 1);
+		cX = -radius / sqrt(tan(degree * M_PI / 180) * tan(degree * M_PI / 180) + 1);
+	}
+	if (degree < 180.000001 && degree > 179.999999)
+	{
+		cY = 0;
+		cX = -radius / sqrt(tan(degree * M_PI / 180) * tan(degree * M_PI / 180) + 1);
+	}
+	if (degree > 180 && degree < 270)
+	{
+		cY = -(radius * tan(degree * M_PI / 180)) / sqrt(tan(degree * M_PI / 180) * tan(degree * M_PI / 180) + 1);
+		cX = -radius / sqrt(tan(degree * M_PI / 180) * tan(degree * M_PI / 180) + 1);
+	}
+	if (degree < 270.000001 && degree > 269.999999)
+	{
+		cY = -radius;
+		cX = 0;
+	}
+	if (degree > 270 && degree < 360)
+	{
+		cY = (radius * tan(degree * M_PI / 180)) / sqrt(tan(degree * M_PI / 180) * tan(degree * M_PI / 180) + 1);
+		cX = radius / sqrt(tan(degree * M_PI / 180) * tan(degree * M_PI / 180) + 1);
+	}
+	if (degree < 360.000001 && degree > 359.999999)
+	{
+		cY = 0;
+		cX = radius / sqrt(tan(degree * M_PI / 180) * tan(degree * M_PI / 180) + 1);
+	}
+}
+
+DialWidget::DialWidget(QWidget* parent /*= nullptr*/)
+{
+	int width = this->width();	
+}
+
+DialWidget::~DialWidget()
+{
+
+}
+
+void DialWidget::setQianhouDegree(int qianhou_degree)
+{
+	m_qianhou_degree = qianhou_degree;
+}
+
+void DialWidget::setZuoyouDegree(int zuoyou_degree)
+{
+	m_zuoyou_degree = zuoyou_degree;
+}
+
+void DialWidget::paintEvent(QPaintEvent* event)
+{
+	QPixmap pixmap(":/SphereBalanceTool/res/xt.bmp");
+	
+	step = (width() - 176) / 32.0;
+
+	//根据前后、左右角度换算出表盘中心坐标、内外圆半径
+	double R = sqrt(m_qianhou_degree * step * step * m_qianhou_degree + m_zuoyou_degree * step * step * m_zuoyou_degree);
+	if (R > (width()-176)/2)
+	{
+		R = (width() - 176) / 2;
+	}
+	double innerR;
+	double outterR;
+	if (R - BIAOPANHOUDU * step > BIAOPANHOUDU * step)
+	{
+		innerR = R - BIAOPANHOUDU * step;
+	}
+	else
+	{
+		innerR = BIAOPANHOUDU * step;
+	}
+
+	outterR = innerR + 2 * BIAOPANHOUDU * step;
+
+	if (outterR > 16 * step)
+	{
+		outterR = 16 * step;
+		innerR = 16 * step - 2 * BIAOPANHOUDU * step;
+	}
+
+	//中心角度
+	double degree;
+	if (step * m_qianhou_degree >= 0 && step * m_zuoyou_degree > 0)
+	{
+		degree = atan((step * m_qianhou_degree) / (step * m_zuoyou_degree)) * 180 / M_PI;
+	}
+	if (step * m_zuoyou_degree < 0)
+	{
+		degree = atan((step * m_qianhou_degree) / (step * m_zuoyou_degree)) * 180 / M_PI + 180;
+	}
+	if (step * m_qianhou_degree < 0 && step * m_zuoyou_degree > 0)
+	{
+		degree = atan((step * m_qianhou_degree) / (step * m_zuoyou_degree)) * 180 / M_PI + 360;
+	}
+	if (step * m_zuoyou_degree < 0.000001 && step * m_zuoyou_degree > -0.000001 && step * m_qianhou_degree < 0)
+	{
+		degree = 270;
+	}
+
+	if (step * m_zuoyou_degree < 0.000001 && step * m_zuoyou_degree > -0.000001 && step * m_qianhou_degree > 0)
+	{
+		degree = 90;
+	}
+
+	if (step * m_zuoyou_degree < 0.000001 && step * m_zuoyou_degree > -0.000001 && step * m_qianhou_degree < 0.000001 && step * m_qianhou_degree > -0.000001)
+	{
+		QStyleOption op;
+		QPainter painter(this);
+		op.init(this);
+		style()->drawPrimitive(QStyle::PE_Widget, &op, &painter, this);
+
+		QWidget::paintEvent(event);
+		return;
+	}
+
+	QRectF outterrect(width() / 2 - outterR +4, height() / 2 - outterR, outterR*2, outterR*2);
+	QRectF innerrect(width() / 2 - innerR +4, height() / 2 - innerR, innerR*2, innerR*2);
+
+	QPainter painter(this);
+	painter.setRenderHint(QPainter::Antialiasing);
+	painter.drawPixmap(0, 0, pixmap);
+	QPen pen;
+	pen.setColor(Qt::blue);
+	pen.setWidth(3);
+	painter.setPen(pen);
+
+	double startDegree = degree - BIAOPANHUDU / 2;
+	if (startDegree < 0)
+	{
+		startDegree += 360;
+	}
+	double endDegree = degree + BIAOPANHUDU / 2;
+	if (endDegree > 360)
+	{
+		endDegree -= 360;
+	}
+
+	QPainterPath myPath;
+
+	myPath.arcMoveTo(innerrect, startDegree);
+	myPath.arcTo(innerrect, startDegree, BIAOPANHUDU);
+	double waiX;
+	double waiY;
+	GetCoodByDegree(endDegree, outterR, waiX, waiY);
+	myPath.lineTo(width() / 2 + waiX + 4, height() / 2 - waiY);
+
+	myPath.arcTo(outterrect, endDegree, -BIAOPANHUDU);
+
+	double neiX;
+	double neiY;
+	GetCoodByDegree(startDegree, innerR, neiX, neiY);
+	myPath.lineTo(width() / 2 +neiX + 4, height() / 2 -neiY);
+
+	painter.drawPath(myPath);
+
+	QStyleOption op;
+	op.init(this);
+	style()->drawPrimitive(QStyle::PE_Widget, &op, &painter, this);
+
+	QWidget::paintEvent(event);
+}

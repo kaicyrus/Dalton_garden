@@ -1,0 +1,16 @@
+#pragma once
+
+#include <QObject>
+#include "Type_def.h"
+class EtherCATWorker:public QObject
+{
+	Q_OBJECT
+public:
+	EtherCATWorker(QObject *parent = nullptr);
+	~EtherCATWorker();
+
+public:
+	static void GetAllDataOneTime(F64& orgvalue1, F64& orgvalue2, F64& orgvalue3, F64& orgvalue4, F64& orgvalue5, F64& orgvalue6, F64& orgvalue7, F64& orgvalue8,
+		F64& value1, F64& value2, F64& value3, F64& value4, F64& value5, F64& value6, F64& value7, F64& value8, bool isCalibration = false);
+};
+

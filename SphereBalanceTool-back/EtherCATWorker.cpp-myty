@@ -1,0 +1,178 @@
+#include "EtherCATWorker.h"
+
+#include "Windows.h"
+#include "EtherCAT_DLL.h"
+#include "EtherCAT_DLL_Err.h"
+#include "commonDefine.h"
+extern U16 gESCCardNo;
+extern U16 gNodeID;
+extern U16 gNodeID2;
+EtherCATWorker::EtherCATWorker(QObject* parent):QObject(parent)
+{
+
+}
+
+EtherCATWorker::~EtherCATWorker()
+{
+
+}
+
+void EtherCATWorker::GetAllDataOneTime(F64& orgvalue1, F64& orgvalue2, F64& orgvalue3, F64& orgvalue4, F64& orgvalue5, F64& orgvalue6, F64& orgvalue7, F64& orgvalue8, 
+	F64& value1, F64& value2, F64& value3, F64& value4, F64& value5, F64& value6, F64& value7, F64& value8, bool isCalibration /*= false*/)
+{
+	I16 rt;
+	F64 Value1 = 0;//
+	F64 Value2 = 0;
+	F64 Value3 = 0;
+	F64 Value4 = 0;
+	F64 fValue1 = 0;
+	F64 fValue2 = 0;
+	F64 fValue3 = 0;
+	F64 fValue4 = 0;
+
+	F64 Value5 = 0;
+	F64 Value6 = 0;
+	F64 Value7 = 0;
+	F64 Value8 = 0;
+	F64 fValue5 = 0;
+	F64 fValue6 = 0;
+	F64 fValue7 = 0;
+	F64 fValue8 = 0;
+
+
+	F64 TempData = 0;
+	QString xx;
+
+	{
+		//dizuo
+		{
+			rt = _ECAT_Slave_R1_EC8124_Get_Input_Value(gESCCardNo, gNodeID, 0, 0, &Value1);
+
+			rt = _ECAT_Slave_R1_EC8124_Get_Input_Value(gESCCardNo, gNodeID, 1, 0, &Value2);
+
+			rt = _ECAT_Slave_R1_EC8124_Get_Input_Value(gESCCardNo, gNodeID, 2, 0, &Value3);
+
+			rt = _ECAT_Slave_R1_EC8124_Get_Input_Value(gESCCardNo, gNodeID, 3, 0, &Value4);
+
+
+			fValue1 = Value1; // a传感器
+			fValue2 = Value2; // b传感器
+			fValue3 = Value3; // c传感器
+			fValue4 = Value4; // d传感器
+
+			// 底座
+			fValue1 = (fValue1 / 5 * 200) * baseA_K + baseA_B;
+			fValue2 = (fValue2 / 5 * 200) * baseB_K + baseB_B;
+			fValue3 = (fValue3 / 5 * 200) * baseC_K + baseC_B;
+			fValue4 = (fValue4 / 5 * 200) * baseD_K + baseD_B;
+
+			double tmpf1 = k1 * (fValue1 + fValue2 + fValue3 + fValue4) + b1;
+			tmpf1 = k2 * tmpf1 + b2;
+
+			double tmpks = tmpf1 / (fValue1 + fValue2 + fValue3 + fValue4);
+			fValue1 = fValue1 * tmpks;
+			fValue2 = fValue2 * tmpks;
+			fValue3 = fValue3 * tmpks;
+			fValue4 = fValue4 * tmpks;
+
+			value1 = fValue1;
+			value2 = fValue2;
+			value3 = fValue3;
+			value4 = fValue4;
+
+			orgvalue1 = Value1;
+			orgvalue2 = Value2;
+			orgvalue3 = Value3;
+			orgvalue4 = Value4;
+
+// 			if (isCalibration)
+// 			{
+// 				ui->lineEdit_data1->setText(QString("Ev:%1 -> Calibration:%2").arg(QString::number(Value1, 'f', 3)).arg(QString::number(fValue1, 'f', 3)));
+// 				ui->lineEdit_data2->setText(QString("Ev:%1 -> Calibration:%2").arg(QString::number(Value2, 'f', 3)).arg(QString::number(fValue2, 'f', 3)));
+// 				ui->lineEdit_data3->setText(QString("Ev:%1 -> Calibration:%2").arg(QString::number(Value3, 'f', 3)).arg(QString::number(fValue3, 'f', 3)));
+// 				ui->lineEdit_data4->setText(QString("Ev:%1 -> Calibration:%2").arg(QString::number(Value4, 'f', 3)).arg(QString::number(fValue4, 'f', 3)));
+// 				value1 = fValue1;
+// 				value2 = fValue2;
+// 				value3 = fValue3;
+// 				value4 = fValue4;
+// 			}
+// 			else
+// 			{
+// 				ui->lineEdit_data1->setText(QString("Ev:%1 -> Weight:%2 | Power:%3").arg(QString::number(Value1, 'f', 3)).arg(QString::number(fValue1 - fCalibValue1, 'f', 1)).arg(QString::number((fValue1 - fCalibValue1) * 9.8, 'f', 2)));
+// 				ui->lineEdit_data2->setText(QString("Ev:%1 -> Weight:%2 | Power:%3").arg(QString::number(Value2, 'f', 3)).arg(QString::number(fValue2 - fCalibValue2, 'f', 1)).arg(QString::number((fValue2 - fCalibValue2) * 9.8, 'f', 2)));
+// 				ui->lineEdit_data3->setText(QString("Ev:%1 -> Weight:%2 | Power:%3").arg(QString::number(Value3, 'f', 3)).arg(QString::number(fValue3 - fCalibValue3, 'f', 1)).arg(QString::number((fValue3 - fCalibValue3) * 9.8, 'f', 2)));
+// 				ui->lineEdit_data4->setText(QString("Ev:%1 -> Weight:%2 | Power:%3").arg(QString::number(Value4, 'f', 3)).arg(QString::number(fValue4 - fCalibValue4, 'f', 1)).arg(QString::number((fValue4 - fCalibValue4) * 9.8, 'f', 2)));
+// 				value1 = fValue1 - fCalibValue1;
+// 				value2 = fValue2 - fCalibValue2;
+// 				value3 = fValue3 - fCalibValue3;
+// 				value4 = fValue4 - fCalibValue4;
+// 			}
+
+		}
+
+		//zuoyi
+		{
+			rt = _ECAT_Slave_R1_EC8124_Get_Input_Value(gESCCardNo, gNodeID2, 0, 0, &Value5);
+
+			rt = _ECAT_Slave_R1_EC8124_Get_Input_Value(gESCCardNo, gNodeID2, 1, 0, &Value6);
+
+			rt = _ECAT_Slave_R1_EC8124_Get_Input_Value(gESCCardNo, gNodeID2, 2, 0, &Value7);
+
+			rt = _ECAT_Slave_R1_EC8124_Get_Input_Value(gESCCardNo, gNodeID2, 3, 0, &Value8);
+
+
+			fValue5 = Value5; // a传感器
+			fValue6 = Value6; // b传感器
+			fValue7 = Value7; // c传感器
+			fValue8 = Value8; // d传感器
+
+			// 座椅
+			fValue5 = (fValue5 / 5 * 200) * chairA_K + chairA_B;
+			fValue6 = (fValue6 / 5 * 200) * chairB_K + chairB_B;
+			fValue7 = (fValue7 / 5 * 200) * chairC_K + chairC_B;
+			fValue8 = (fValue8 / 5 * 200) * chairD_K + chairD_B;
+
+			double tmpf1 = k3 * (fValue5 + fValue6 + fValue7 + fValue8) + b3;
+			tmpf1 = k4 * tmpf1 + b4;
+
+			double tmpks = tmpf1 / (fValue5 + fValue6 + fValue7 + fValue8);
+			fValue5 = fValue5 * tmpks;
+			fValue6 = fValue6 * tmpks;
+			fValue7 = fValue7 * tmpks;
+			fValue8 = fValue8 * tmpks;
+
+			value5 = fValue5;
+			value6 = fValue6;
+			value7 = fValue7;
+			value8 = fValue8;
+
+			orgvalue5 = Value5;
+			orgvalue6 = Value6;
+			orgvalue7 = Value7;
+			orgvalue8 = Value8;
+
+// 			if (isCalibration)
+// 			{
+// 				ui->lineEdit_data5->setText(QString("Ev:%1 -> Calibration:%2").arg(QString::number(Value5, 'f', 3)).arg(QString::number(fValue5, 'f', 3)));
+// 				ui->lineEdit_data6->setText(QString("Ev:%1 -> Calibration:%2").arg(QString::number(Value6, 'f', 3)).arg(QString::number(fValue6, 'f', 3)));
+// 				ui->lineEdit_data7->setText(QString("Ev:%1 -> Calibration:%2").arg(QString::number(Value7, 'f', 3)).arg(QString::number(fValue7, 'f', 3)));
+// 				ui->lineEdit_data8->setText(QString("Ev:%1 -> Calibration:%2").arg(QString::number(Value8, 'f', 3)).arg(QString::number(fValue8, 'f', 3)));
+// 				value5 = fValue5;
+// 				value6 = fValue6;
+// 				value7 = fValue7;
+// 				value8 = fValue8;
+// 			}
+// 			else
+// 			{
+// 				ui->lineEdit_data5->setText(QString("Ev:%1 -> Weight:%2 | Power:%3").arg(QString::number(Value5, 'f', 3)).arg(QString::number(fValue5 - fCalibValue5, 'f', 1)).arg(QString::number((fValue5 - fCalibValue5) * 9.8, 'f', 2)));
+// 				ui->lineEdit_data6->setText(QString("Ev:%1 -> Weight:%2 | Power:%3").arg(QString::number(Value6, 'f', 3)).arg(QString::number(fValue6 - fCalibValue6, 'f', 1)).arg(QString::number((fValue6 - fCalibValue6) * 9.8, 'f', 2)));
+// 				ui->lineEdit_data7->setText(QString("Ev:%1 -> Weight:%2 | Power:%3").arg(QString::number(Value7, 'f', 3)).arg(QString::number(fValue7 - fCalibValue7, 'f', 1)).arg(QString::number((fValue7 - fCalibValue7) * 9.8, 'f', 2)));
+// 				ui->lineEdit_data8->setText(QString("Ev:%1 -> Weight:%2 | Power:%3").arg(QString::number(Value8, 'f', 3)).arg(QString::number(fValue8 - fCalibValue8, 'f', 1)).arg(QString::number((fValue8 - fCalibValue8) * 9.8, 'f', 2)));
+// 				value5 = fValue5 - fCalibValue5;
+// 				value6 = fValue6 - fCalibValue6;
+// 				value7 = fValue7 - fCalibValue7;
+// 				value8 = fValue8 - fCalibValue8;
+// 			}
+		}
+	}
+}

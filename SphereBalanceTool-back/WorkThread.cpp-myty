@@ -1,0 +1,59 @@
+#include "WorkThread.h"
+#include <QDebug>
+
+void WorkThread::run()
+{
+
+	qDebug() << "child thread" << QThread::currentThreadId() << endl;
+	/* ... here is the expensive or blocking operation ... */
+	
+	U16 Status;
+	//群组
+	U16 AxisNoArray[2] = { 0,1 };
+	U16 SlotNoArray[2] = { 0,0 };
+	Status = _ECAT_Slave_User_Motion_Control_Set_Type(0, 0, 2, AxisNoArray, SlotNoArray, 1);
+	qDebug() << "_ECAT_Slave_User_Motion_Control_Set_Type status:" << Status;
+	Status = _ECAT_Slave_User_Motion_Control_Svon(0, 0, 1);
+	qDebug() << "_ECAT_Slave_User_Motion_Control_Svon status:" << Status;
+	//先暂停模式
+	Status = _ECAT_Slave_User_Motion_Control_Set_Enable_Mode(0, 0, 2);
+	qDebug() << "_ECAT_Slave_User_Motion_Control_Set_Enable_Mode 2 status:" << Status;
+	static int counter = 0;
+	for (int i = 0;i < 100;i++)
+	{
+		counter++;
+		I32 DataArray[2] = { 0,100 * counter };
+		qDebug() << "DataArray[1]" << DataArray[1];
+		Status = _ECAT_Slave_User_Motion_Control_Set_Data(0, 0, DataArray);
+		qDebug() << "_ECAT_Slave_User_Motion_Control_Set_Data 100 status:" << Status;
+	}
+
+	//开启模式
+	Status = _ECAT_Slave_User_Motion_Control_Set_Enable_Mode(0, 0, 1);
+	qDebug() << "_ECAT_Slave_User_Motion_Control_Set_Enable_Mode 1 status:" << Status;
+	while (!m_isStop)
+	{
+		U16 dataCounter = 0;
+		Status = _ECAT_Slave_User_Motion_Control_Get_DataCnt(0, 0, &dataCounter);
+		qDebug() << "_ECAT_Slave_User_Motion_Control_Get_DataCnt 1 status:" << Status;
+		qDebug() <<"dataCounter:" << dataCounter;
+		if (dataCounter < 100)
+		{
+			counter++;
+			I32 DataArray[2] = { 0,100 * counter };
+			qDebug() << "DataArray[1]" << DataArray[1];
+			Status = _ECAT_Slave_User_Motion_Control_Set_Data(0, 0, DataArray);
+			qDebug() << "_ECAT_Slave_User_Motion_Control_Set_Data status:" << Status;
+		}
+		else if (dataCounter == 0)
+		{
+			Status = _ECAT_Slave_User_Motion_Control_Set_Enable_Mode(0, 0, 0);
+			qDebug() << "_ECAT_Slave_User_Motion_Control_Set_Enable_Mode 0 status:" << Status;
+			qDebug() << "dataCounter = 0,breaked!!!!!11";
+			break;
+		}
+		QThread::msleep(1);
+	}
+	
+	qDebug() << "thread stoped!!!";
+}

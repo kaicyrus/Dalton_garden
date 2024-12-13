@@ -1,0 +1,23 @@
+#ifndef WORKTHREAD_H
+#define WORKTHREAD_H
+
+#include "Windows.h"
+#include "EtherCAT_DLL.h"
+#include "EtherCAT_DLL_Err.h"
+#include "EtherCATWorker.h"
+//#include "Type_def.h"
+#include "commonDefine.h"
+#include <QThread>
+class WorkThread :
+    public QThread
+{
+    Q_OBJECT
+public:
+    virtual void run();
+
+    void stop() { m_isStop = true; }
+
+private:
+    bool m_isStop = false;//ֹͣ��־λ
+};
+#endif // WORKTHREAD_H

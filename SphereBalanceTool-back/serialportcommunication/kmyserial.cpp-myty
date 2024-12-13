@@ -1,0 +1,257 @@
+#include "kmyserial.h"
+#include "Windows.h"
+#include <synchapi.h>
+#include <QDebug>
+
+/*
+KMySerialThread::KMySerialThread(QThread *parent) : QThread(parent)
+{
+    stopped = false;
+  //  m_pWidget=NULL;
+
+}*/
+
+kmyserial::kmyserial(): QObject()
+{
+    m_nRecvLen=0;
+    //m_MySerialThread=NULL;
+    m_lpUser=NULL;
+    m_bRecvMutex=0;
+    recvcallback=NULL;
+    m_bSerialState=0;
+
+}
+kmyserial::~kmyserial()
+{
+    Close();
+
+}
+int kmyserial::Close()
+{
+    if(my_serialPort.handle())
+        my_serialPort.close();
+    /*if (m_MySerialThread)
+    {
+        m_MySerialThread->stop();
+        Sleep(1000);
+        delete m_MySerialThread;
+    }
+    m_MySerialThread=NULL;*/
+    return 0;
+}
+
+
+int kmyserial::Open(const char* portname,const char* strBPS,lpProcessRecvData pf)
+{
+
+    //portname="COM"+strserialnum;
+    my_serialPort.setPortName( portname);
+    if (false==my_serialPort.open(QIODevice::ReadWrite))
+        return 0;
+    m_bSerialState=1;
+    //qDebug()<<ui->textEdit_serialnum->toPlainText();
+
+    int BaudRate=0;//波特率     9600
+    char Parity=0;//校验位      n
+    int ByteSize=0;//数据位     8
+    char  StopBits[10];//停止位 1
+    memset(StopBits,0,sizeof(StopBits));
+    int r1=sscanf(strBPS,"%d,%c,%d,%s",&BaudRate,&Parity,&ByteSize,&StopBits[0]);
+    if (r1!=4)
+    {
+        //QMessageBox::information(NULL, QString("title"), QString("波特率格式错"));
+        return 0;
+    }
+    switch (BaudRate)
+    {
+    case 1200:
+        my_serialPort.setBaudRate(QSerialPort::Baud1200); //
+        break;
+    case 2400:
+        my_serialPort.setBaudRate(QSerialPort::Baud2400); //
+        break;
+    case 4800:
+        my_serialPort.setBaudRate(QSerialPort::Baud4800); //
+        break;
+    case 9600:
+        my_serialPort.setBaudRate(QSerialPort::Baud9600); //
+        break;
+    case 19200:
+        my_serialPort.setBaudRate(QSerialPort::Baud19200); //
+        break;
+    case 38400:
+        my_serialPort.setBaudRate(QSerialPort::Baud38400); //
+        break;
+    case 57600:
+        my_serialPort.setBaudRate(QSerialPort::Baud57600); //
+        break;
+    case 115200:
+        my_serialPort.setBaudRate(QSerialPort::Baud115200); //
+        break;
+    default:
+        //my_serialPort.setBaudRate(QSerialPort::UnknownBaud); //
+        break;
+    }
+    switch (Parity)
+    {
+    case 'N':
+    case 'n':
+        my_serialPort.setParity(QSerialPort::NoParity);//校验，无
+        break;
+    case 'E':
+    case 'e':
+        my_serialPort.setParity(QSerialPort::EvenParity);//校验，偶
+        break;
+    case 'O':
+    case 'o':
+        my_serialPort.setParity(QSerialPort::OddParity);//校验，奇
+        break;
+    default:
+        break;
+    }
+    switch (ByteSize)
+    {
+    case 5:
+        my_serialPort.setDataBits(QSerialPort::Data8);//数据位，5字节  //
+        break;
+    case 6:
+        my_serialPort.setDataBits(QSerialPort::Data6);//数据位，6字节  //
+        break;
+    case 7:
+        my_serialPort.setDataBits(QSerialPort::Data6);//数据位，7字节  //
+        break;
+    case 8:
+        my_serialPort.setDataBits(QSerialPort::Data8);//数据位，8字节  //
+        break;
+    default:
+        break;
+    }
+    my_serialPort.setFlowControl( QSerialPort::NoFlowControl);//数据流控制,无
+    if (strcmp(StopBits,"1")==0)
+        my_serialPort.setStopBits(QSerialPort::OneStop);//一位停止位
+    else if (strcmp(StopBits,"1.5")==0)
+        my_serialPort.setStopBits(QSerialPort::OneAndHalfStop);//
+    else if (strcmp(StopBits,"2")==0)
+        my_serialPort.setStopBits(QSerialPort::TwoStop);//
+
+    //my_serialPort.setRequestToSend(false);
+
+    if (pf)//创建recv线程
+    {
+        recvcallback=pf;
+        QObject::connect(&my_serialPort,SIGNAL(readyRead()),this,SLOT(RecvData()));
+        /*m_MySerialThread=new KMySerialThread();
+        m_MySerialThread->m_KMySerial=this;
+        m_MySerialThread->start();*/
+    }
+    return 1;
+
+
+}
+int kmyserial::SendData(const char* buf,int len)
+{
+    int r=my_serialPort.write(buf,len);
+    my_serialPort.waitForBytesWritten(500);
+    my_serialPort.flush();
+    Sleep(150);
+    return r;
+
+
+}
+//void KMySerialThread::run()
+//{
+//    while (!stopped)
+//    {
+//        m_KMySerial->RecvData();
+//        msleep(10);
+//    }
+//    exec();
+
+//    stopped = false;
+
+//}
+int kmyserial::Handlebuf(int retcallback)
+{
+    if (retcallback>0)
+    {
+        if (m_nRecvLen > retcallback)
+        {
+            m_nRecvLen-=retcallback;
+            memmove(m_RecvBuf,&m_RecvBuf[retcallback],m_nRecvLen);
+        }
+        else //if (retcallback == info.RecvLen)
+        {
+            m_nRecvLen=0;
+            memset(m_RecvBuf,0,sizeof(m_RecvBuf));
+        }
+    }
+
+    return 1;
+
+}
+void kmyserial::RecvData()
+{
+    m_QMutex.lock();
+    //pbuf=gbuf;
+    if (m_nRecvLen > sizeof(m_RecvBuf))
+    {
+        m_nRecvLen = 0;
+        qDebug() << "chaochu happened!!111111";
+    }
+        
+    //if (1==m_bRecvMutex)
+        
+    int thisrecvlen = my_serialPort.read((char*)&m_RecvBuf[m_nRecvLen],sizeof(m_RecvBuf)-m_nRecvLen);//
+    //qDebug("------------------%d",thisrecvlen);
+#if 0
+    QByteArray bytes=my_serialPort.readAll();
+    thisrecvlen=bytes.length();
+    if(thisrecvlen>0)
+    {
+        if((thisrecvlen+m_nRecvLen)<sizeof(m_RecvBuf));
+            memcpy(&m_RecvBuf[m_nRecvLen],bytes.data(),thisrecvlen);
+
+    }
+
+
+#endif
+    //if (1==m_bRecvMutex)
+        
+    //if (thisrecvlen>0 && thisrecvlen<sizeof(m_RecvBuf))
+    {
+        //emit Add1(123);
+        //gbuf[len]=0;
+        //emit Signal_RecvSerial((unsigned char*)gbuf,len);
+
+        if ((m_nRecvLen + thisrecvlen) > sizeof(m_RecvBuf))
+        {
+            m_nRecvLen = 0;
+            qDebug() << "chaochu happened!!222222222";
+        }
+            
+        m_nRecvLen+=thisrecvlen;
+        if (m_nRecvLen > sizeof(m_RecvBuf))
+        {
+            m_nRecvLen = 0;
+            qDebug() << "chaochu happened!!333333333";
+        }
+            
+        if (recvcallback!=NULL)
+        {
+			QString strTmp;
+			for (int n = 0; n < m_nRecvLen; n++)
+			{
+				strTmp += QString().asprintf(" %x", (unsigned char)m_RecvBuf[n]);
+			}
+            //qDebug() << "m_nRecvLen:" << m_nRecvLen << "; m_RecvBuf: " << strTmp;
+            int retcallback=recvcallback(m_RecvBuf,m_nRecvLen,m_lpUser);
+            //qDebug("recvcallback-----%d",retcallback);
+            Handlebuf(retcallback);
+            //qDebug() << "Handlebuf retcallback:" << retcallback;
+        }
+
+    }
+    m_QMutex.unlock();
+
+    return ;
+}

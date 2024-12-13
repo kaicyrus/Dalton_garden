@@ -1,0 +1,34 @@
+﻿#ifndef COMMON_NAME_CHANGE_H
+#define COMMON_NAME_CHANGE_H
+
+/**
+* 汉字转拼音类
+* 1:汉字转拼音
+* 2:汉字转拼音简拼
+* 3:汉字转拼音首字母
+*/
+
+#include <vector>
+#include <string>
+
+class NameChange
+{
+public:
+    static NameChange* GetInstance();
+    explicit NameChange();
+
+public:
+    // 汉字转拼音
+    std::string ZhToPY(const std::string &chinese);
+    // 汉字转字母简拼
+    std::string ZhToJP(const std::string &chinese);
+    // 汉字转首字母
+    std::string ZhToZM(const std::string &chinese);
+
+private:
+    static NameChange*       instance_;
+    std::vector<std::string> name_py_;
+    std::string              name_jp_;
+};
+
+#endif // COMMON_NAME_CHANGE_H

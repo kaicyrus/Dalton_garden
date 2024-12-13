@@ -1,0 +1,73 @@
+#ifndef SERIALCOMMUNICATION_H
+#define SERIALCOMMUNICATION_H
+
+#include <QObject>
+#include <QSerialPort>
+#include <QSharedPointer>
+#include <memory>
+
+//!  一个串口参数类.
+/*!
+串口相关参数.
+*/
+struct Param
+{
+    QString serialPortName;//! 串口名.串口号 COM1
+    qint32 baudRate;//! 串口波特率. 115200
+    QSerialPort::DataBits dataBits;//! 数据位. 8 7
+    QSerialPort::Parity parity;//! 奇偶位. 校验位 none even odd
+    QSerialPort::StopBits stopBits;//! 停止位. 1 0
+};
+
+class SerialCommunication : public QObject
+{
+    Q_OBJECT
+
+public:
+    SerialCommunication(QObject *parent = Q_NULLPTR);
+
+    //! 串口的初始化.
+    void PortInit();
+    //! 打开串口.
+    bool PortOpen(Param param);
+    //! 关闭串口.
+    bool PortClose();
+    //! 发送数据.
+    int PortWrite(char* buff, unsigned int length);
+    //! 发送数据并等待返回值的函数
+    QByteArray sendSerialCommand(const QByteArray &command);
+
+//    // 读取数据所需枚举 例子可根据需求自由修改
+//    enum PortReadEnum
+//    {
+//        ebpc,		// 回复OK>
+//        sdpc,		// 回复OK>
+//        lbpc,		// 回复C
+//        oneData,	// 发出一包数据回复 06为正确
+//    };
+
+//    //! 读取数据. 返回值 1为成功 0为失败
+//    int PortRead(PortReadEnum _read_enum);
+
+signals:
+    // 接收回调返回值
+    void responseReceived(const QByteArray &data);
+public slots:
+    void onReadyRead();
+
+protected:
+    //! 存储监听的数据. 没有使用监听功能可以根据需求自行修改
+    //inline void setListenData(QByteArray& data) { m_Data += data; }
+    //! 监听.
+    void PortListen();
+    //! 清除发送buff.
+    int clearSendBuff();
+    //! 清除接受buff.
+    int clearRecvBuff();
+    //! 设置串口参数.
+    int setParam(void* param);
+private:
+    QSharedPointer<QSerialPort> m_pSerialPort;	// 串口通信
+};
+
+#endif // SERIALCOMMUNICATION_H

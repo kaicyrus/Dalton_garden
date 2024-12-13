@@ -1,0 +1,163 @@
+#ifndef NINGSHIWIDGET_H
+#define NINGSHIWIDGET_H
+
+#include <QWidget>
+#include <QTimer>
+#include <qlabel.h>
+#include <QMutex>
+#include <queue>
+
+namespace Ui {
+class NingShiWidget;
+}
+
+//凝视测试传感器数据结构
+extern struct SensorDataStruct {
+
+	double AngVelocity;	// 角速度
+	int	direction;		// 方向 0：未知， 1、2 垂直俯仰上、下， 3、4 水平转动左、右， 5、6 左右倾斜左、右
+	long long timestamp;      // 时间戳
+	SensorDataStruct() {
+		AngVelocity = 0;
+		direction = 0;
+		timestamp = 0;
+	}
+};
+
+//凝视测试结果数据结构
+extern struct GSTResultStruct {
+    int targetDirection;        //目标测试方向    方向 0：未知， 1、2 垂直俯仰上、下， 3、4 水平转动左、右， 5、6 左右倾斜左、右
+	int targetAngVelocity;		//目标角速度
+	double testAngVelocity;		//测试角速度-----综合平均角速度
+    int testDuration;           //测试持续时间
+	int	result;					//结果	0：错误，1：正确，2：未识别
+    std::vector<SensorDataStruct> sensorDataList;
+    GSTResultStruct() {
+        targetDirection = 0;
+		targetAngVelocity = 0;
+		testAngVelocity = 0;
+        testDuration = 0;
+		result = -1;
+        sensorDataList.clear();
+	}
+};
+
+class NingShiWidget : public QWidget
+{
+    Q_OBJECT
+
+public:
+    explicit NingShiWidget(QWidget *parent = nullptr);
+    ~NingShiWidget();
+
+    void Init();
+
+    void OnNotifySensorData(const SensorDataStruct& sensordata);
+
+protected slots:
+    void On_test_timer_timeout();
+    void On_rest_timer_timeout();
+    void On_testlogic_timer_timeout();
+
+    // 静态测试逻辑：同一等级的图上，出现2次错误，则结束测试；
+    //               同一等级的图上，没有错误次数时，正确则跳到高1等级；有1次错误时，需要有2次正确再跳到高1等级。
+    // 静态测试开始
+    void On_pushButton_static_start_clicked();
+
+    bool eventFilter(QObject* watched, QEvent* event);
+
+    // 清空界面
+    void On_pushButton_clear_clicked();
+    // 垂直俯仰评估开始
+    void On_pushButton_start_Pitch_clicked();
+    // 水平转动评估开始
+    void On_pushButton_start_Yaw_clicked();
+    // 左右倾斜评估开始
+    void On_pushButton_start_Roll_clicked();
+
+    void On_lineEdit_staticview_textEdited(const QString& text);
+
+
+private:
+    Ui::NingShiWidget *ui;
+
+    QTimer testLogicTimer;
+    
+
+    QLabel* label_test;             // 静态测试“E”
+    int CorrectTimeOnOneLevel = 0;  // 同一等级图上，正确次数
+    int WrongTimeOnOneLevel = 0;    // 同一等级图上，错误次数
+    int currentDirection = 0;       // 测试图"E"方向 ：1右2上3左4下
+    bool answered = false;          // 静态测试时，是否已经回答
+        
+    // 静态测试 测20s,休息8s
+    QTimer testTimer;
+    int testTime = 20;
+    bool In_test = false;
+    QTimer restTimer;
+    int restTime = 8;
+
+    // 静态视力 0-10表示视力4.0-5.0；-1则是未测试过
+    int static_vision = -1;
+
+    // 当前传感器数据
+    //SensorDataStruct cur_sensordata;
+    std::queue<SensorDataStruct> cur_sensordata_queue;
+    QLabel* label_curVelocity; //实时角速度条
+    QLabel* label_reqVelocity; //实时要求的角速度框
+
+
+    bool In_Pitch = false;                    // 是否在垂直俯仰过程中
+    bool last_Req_Pitch_Direction_Up = false; // 上一次要求的垂直俯仰的方向
+    bool Req_Pitch_Direction_Up = false;      // 本次要求的垂直俯仰的方向
+    int Pitch_Up_Wrong_Time = 0;              // 垂直俯仰向上错误次数
+    int Pitch_Down_Wrong_Time = 0;            // 垂直俯仰向下错误次数
+	int Pitch_Up_Success_Time = 0;            // 垂直俯仰向上成功次数    成功次数用于判断第一次失败时降档
+	int Pitch_Down_Success_Time = 0;          // 垂直俯仰向下成功次数
+    int Req_Pitch_AngVel_Up = 0;              // 垂直俯仰向上需要的角速度
+    int Req_Pitch_AngVel_Down = 0;            // 垂直俯仰向下需要的角速度
+    std::map<int, GSTResultStruct> pitch_data_map; //first:id序号，本次垂直俯仰测试中的数据
+    int pitch_data_map_id = 0;                // 垂直俯仰测试数据id
+    bool In_Pitch_Show_TestPic = false;       // 是否在展示测试图期间
+    bool In_Pitch_CanAnswer = false;          // 垂直俯仰下是否能回答测试结果
+
+	bool In_Yaw = false;                      // 是否在水平转动过程中
+	bool last_Req_Yaw_Direction_Left = false; // 上一次要求的水平转动的方向
+	bool Req_Yaw_Direction_Left = false;      // 本次要求的水平转动的方向
+	int Yaw_Left_Wrong_Time = 0;              // 水平转动向左错误次数
+	int Yaw_Right_Wrong_Time = 0;             // 水平转动向右错误次数
+	int Yaw_Left_Success_Time = 0;            // 水平转动向左成功次数    成功次数用于判断第一次失败时降档
+	int Yaw_Right_Success_Time = 0;           // 水平转动向右成功次数
+	int Req_Yaw_AngVel_Left = 0;              // 水平转动向左需要的角速度
+	int Req_Yaw_AngVel_Right = 0;             // 水平转动向右需要的角速度
+	std::map<int, GSTResultStruct> yaw_data_map; // first:id序号，本次水平转动测试中的数据
+	int yaw_data_map_id = 0;                  // 水平转动测试数据id
+	bool In_Yaw_Show_TestPic = false;         // 是否在展示测试图期间
+	bool In_Yaw_CanAnswer = false;            // 水平转动下是否能回答测试结果
+
+	bool In_Roll = false;                      // 是否在左右倾斜过程中
+	bool last_Req_Roll_Direction_Left = false; // 上一次要求的左右倾斜的方向
+	bool Req_Roll_Direction_Left = false;      // 本次要求的左右倾斜的方向
+	int Roll_Left_Wrong_Time = 0;              // 左右倾斜向左错误次数
+	int Roll_Right_Wrong_Time = 0;             // 左右倾斜向右错误次数
+	int Roll_Left_Success_Time = 0;            // 左右倾斜向左成功次数    成功次数用于判断第一次失败时降档
+	int Roll_Right_Success_Time = 0;           // 左右倾斜向右成功次数
+	int Req_Roll_AngVel_Left = 0;              // 左右倾斜向左需要的角速度
+	int Req_Roll_AngVel_Right = 0;             // 左右倾斜向右需要的角速度
+	std::map<int, GSTResultStruct> roll_data_map; // first:id序号，本次左右倾斜测试中的数据
+	int roll_data_map_id = 0;                  // 左右倾斜测试数据id
+	bool In_Roll_Show_TestPic = false;         // 是否在展示测试图期间
+	bool In_Roll_CanAnswer = false;            // 左右倾斜下是否能回答测试结果
+
+    // 判断有没有连续同一个方向上的数据120个出现，则判断为出现了该方向上的运动
+	int continue_on_one_direction = 0;
+	int last_sensordata_direction = 0;
+    // 上一次的运动方向
+    int last_move_direction = 0;
+
+    bool firstTime_In_LogicTimer = true;  //是否第一次进逻辑处理定时器，用来标记是否出现每次测试图开始前的速度提示
+
+    QMutex cur_sensordata_mutex;
+};
+
+#endif // NINGSHIWIDGET_H

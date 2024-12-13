@@ -1,0 +1,136 @@
+#include "GRScreen.h"
+
+GRScreen::GRScreen(QWidget* parent /*= nullptr*/)
+{
+
+}
+
+GRScreen::~GRScreen()
+{
+
+}
+
+void GRScreen::setSpeed(int speed)
+{
+	m_speed = speed;
+}
+
+void GRScreen::setScreenType(int screenType)
+{
+	m_screentype = screenType;
+	switch (m_screentype)
+	{
+	case 1:
+		currentscreen = ":/SphereBalanceTool/res/j1.png";
+		this->setFixedSize(450, 450);
+		break;
+	case 2:
+		currentscreen = ":/SphereBalanceTool/res/j2.png";
+		this->setFixedSize(450, 450);
+		break;
+	case 3:
+		currentscreen = ":/SphereBalanceTool/res/l1.png";
+		this->setFixedSize(960, 1200);
+		break;
+	case 4:
+		currentscreen = ":/SphereBalanceTool/res/l2.png";
+		this->setFixedSize(960, 1200);
+		break;
+	default:
+		currentscreen = "";
+		break;
+	}
+	
+}
+
+void GRScreen::start(QDateTime starttime)
+{
+	m_starttime = starttime;
+	startFlag = true;
+}
+
+void GRScreen::stop()
+{
+	startFlag = false;
+}
+
+int GRScreen::TargetMovingCal(int moveTotalDist, int speed, time_t timeDifference)
+{
+	int moveValue = 0;
+	double pxPerMsec = (double)moveTotalDist / (speed * 1000);
+	int mo = int(timeDifference * pxPerMsec) % (int)(moveTotalDist / 2);
+
+	if ((int(timeDifference * pxPerMsec) / (int)(moveTotalDist / 2)) % 4 == 0)
+	{
+		moveValue = mo;
+	}
+	else if ((int(timeDifference * pxPerMsec) / (int)(moveTotalDist / 2)) % 4 == 1)
+	{
+		moveValue = (moveTotalDist / 2) - mo;
+	}
+	else if ((int(timeDifference * pxPerMsec) / (int)(moveTotalDist / 2)) % 4 == 2)
+	{
+		moveValue = 0 - mo;
+	}
+	else if ((int(timeDifference * pxPerMsec) / (int)(moveTotalDist / 2)) % 4 == 3)
+	{
+		moveValue = mo -(moveTotalDist / 2);
+	}
+	return moveValue;
+}
+
+void GRScreen::paintEvent(QPaintEvent* event)
+{
+	QPainter painter(this);
+	QPixmap pixmap(currentscreen);
+	if (m_screentype == 3 || m_screentype == 4)
+	{
+		
+		painter.drawPixmap(0, 0, pixmap.scaled(960, 1200, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+	}
+	else
+	{
+		painter.drawPixmap(0, 0, pixmap);
+	}
+
+	double moveWidth = 0;
+	switch (m_screentype)
+	{
+	case 1:
+	case 2:
+		moveWidth = 222;
+		break;
+	case 3:
+		moveWidth = 254;
+		break;
+	case 4:
+		moveWidth = 326;
+		break;
+	default:
+		break;
+	}
+	QDateTime current = QDateTime::currentDateTime();
+	int cha = m_starttime.msecsTo(current);
+	int movevalue = TargetMovingCal(moveWidth, m_speed, cha);
+	QPixmap pixmapsun(":/SphereBalanceTool/res/i1.png");
+	if (!startFlag)
+	{
+		painter.drawPixmap(this->width() / 2 - 18, this->height() / 2 - 18, pixmapsun);
+	}
+	else {
+		switch (m_screentype)
+		{
+		case 1:
+		case 3:
+			painter.drawPixmap(this->width() / 2 - 18 + movevalue, this->height() / 2 - 18, pixmapsun);
+		break;
+		case 2:
+		case 4:
+			painter.drawPixmap(this->width() / 2 - 18, this->height() / 2 - 18 + movevalue, pixmapsun);
+			break;
+		default:
+			break;
+		}
+	}
+	QWidget::paintEvent(event);
+}

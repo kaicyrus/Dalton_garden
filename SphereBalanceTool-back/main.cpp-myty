@@ -1,0 +1,417 @@
+#include "spherebalancetool.h"
+#include "LogHandler.h"
+#include <QtWidgets/QApplication>
+#include <QDebug>
+#include <QTextCodec>
+
+#include   <stdio.h> 
+#include   <string.h>   
+#include <iostream>
+#include <fstream>
+#include <ostream>
+#include <corecrt_math_defines.h>
+#include "name_change.h"
+using namespace std;
+
+void GetMaxAngle(double& originA, double& originB, int modeA)
+{
+	double x = originA;
+	double y = originB;
+	double dist = sqrt(x * x + y * y);
+
+	if (modeA == 1) {
+		if (dist > 16) {
+			double after_tans_x = 16 * (x / dist);
+			double after_tans_y = 16 * (y / dist);
+			originA = after_tans_x;
+			originB = after_tans_y;
+		}
+	}
+	else {
+		if (dist > 13) {
+			double after_tans_x = 13 * (x / dist);
+			double after_tans_y = 13 * (y / dist);
+			originA = after_tans_x;
+			originB = after_tans_y;
+		}
+	}
+	return;
+}
+//直线运动操作
+//moveflag 0：复原，1：朝目标点运动，2：暂停;   moveTime:需要运动时间，单位：秒
+/*void csp_move_operate(const double Jx, const double Jy, const int modeA, const int moveflag, const int moveTime)
+{
+// 	modeA == 1 底座
+// 	modeA == 2 座椅
+// 	double SV1 = 360.0 / 10000000;   // 共用Y
+// 	double SV0 = 360.0 / 24000000;  // 座椅X使用
+// 	double SV2 = 360.0 / 48000000; // 底座X使用
+
+	U16 CardNo = Form_Main->gESCCardNo;
+	U16 NodeIdX = Form_Main->gmy_SV[2];
+	U16 NodeIdY = Form_Main->gmy_SV[3];
+	U16 SlotNo = 0, CurveMode = 0, IsAbs = 1;
+	F64 Acceleration = 0;
+	F64 Deceleration = 0;
+
+	double svy = SV1;
+	double svx = SV0;
+	if (modeA == 1) {
+		svx = SV2;
+		NodeIdX = Form_Main->gmy_SV[0];
+		NodeIdY = Form_Main->gmy_SV[1];
+	}
+
+	switch (moveflag)
+	{
+	case 0:
+		_ECAT_Slave_Motion_Set_Svon(CardNo, NodeIdX, SlotNo, 1);
+		_ECAT_Slave_Motion_Ralm(CardNo, NodeIdX, SlotNo);
+
+		_ECAT_Slave_Motion_Set_Svon(CardNo, NodeIdY, SlotNo, 1);
+		_ECAT_Slave_Motion_Ralm(CardNo, NodeIdY, SlotNo);
+
+		//计算速度
+		I32 XPosition = -Jx / svx;
+		I32 YPosition = Jy / svy;
+
+		I32 XVelocity = abs(XPosition / moveTime);
+		I32 YVelocity = abs(YPosition / moveTime);
+
+		_ECAT_Slave_CSP_Start_Move(CardNo, NodeIdX, SlotNo, 0, XVelocity, XVelocity, XVelocity, Acceleration, Deceleration, CurveMode, IsAbs);
+		_ECAT_Slave_CSP_Start_Move(CardNo, NodeIdY, SlotNo, 0, YVelocity, YVelocity, YVelocity, Acceleration, Deceleration, CurveMode, IsAbs);
+		break;
+	case 1:
+		//使能伺服马达动力
+		_ECAT_Slave_Motion_Set_Svon(CardNo, NodeIdX, SlotNo, 1);
+		_ECAT_Slave_Motion_Ralm(CardNo, NodeIdX, SlotNo);
+
+		_ECAT_Slave_Motion_Set_Svon(CardNo, NodeIdY, SlotNo, 1);
+		_ECAT_Slave_Motion_Ralm(CardNo, NodeIdY, SlotNo);
+
+		//计算速度
+		I32 XPosition = -Jx/svx;
+		I32 YPosition = Jy/svy;
+
+		I32 XVelocity = abs(XPosition / moveTime);
+		I32 YVelocity = abs(YPosition / moveTime);
+
+		_ECAT_Slave_CSP_Start_Move(CardNo, NodeIdX, SlotNo, XPosition, XVelocity, XVelocity, XVelocity, Acceleration, Deceleration, CurveMode, IsAbs);
+		_ECAT_Slave_CSP_Start_Move(CardNo, NodeIdY, SlotNo, YPosition, YVelocity, YVelocity, YVelocity, Acceleration, Deceleration, CurveMode, IsAbs);
+		break;
+	case 2:
+		_ECAT_Slave_Motion_Sd_Stop(CardNo, NodeIdX, SlotNo, Deceleration);
+		_ECAT_Slave_Motion_Sd_Stop(CardNo, NodeIdY, SlotNo, Deceleration);
+		break;
+	default:
+		break;
+	}
+
+	return;
+}*/
+
+// 获取坐标点在8个方向上的投影最大值 
+void GetMaxTravData(const S_RawCoord& data)
+{
+	S_RawCoord m_maxTravData[8];
+	const  double EPSINON = 0.000001;
+	const  double OFFSET = 0.75;
+	S_RawCoord tmpData;
+
+	int istep = 0;
+
+	// 第一象限
+	if ((data.x > EPSINON) && (data.y > EPSINON))
+	{
+		tmpData = m_maxTravData[istep];
+		// 上
+		if ((fabs(data.x) < OFFSET) && (data.y > tmpData.y) && (data.y > EPSINON)) {
+			m_maxTravData[istep] = data;
+			m_maxTravData[istep].x = 0;
+		}
+
+		// 右前
+		istep++;
+		tmpData = m_maxTravData[istep];
+		if ((fabs((sqrt(2.0) * (data.x - data.y)) / 2) < OFFSET) && ((data.x + data.y) / 2 > tmpData.x) && ((data.x + data.y) / 2 > EPSINON)) {
+			m_maxTravData[istep] = data;
+			m_maxTravData[istep].x = (data.x + data.y) / 2;
+			m_maxTravData[istep].y = (data.x + data.y) / 2;
+	   }
+
+	   // 右
+	   istep++;
+	   tmpData = m_maxTravData[istep];
+	   if ((fabs(data.y) < OFFSET) && (data.x > tmpData.x) && (data.x > EPSINON)) {
+		   m_maxTravData[istep] = data;
+		   m_maxTravData[istep].y = 0;
+	   }
+	}
+
+	istep = 2;
+	// 第四象限
+	if ((data.x > EPSINON) && (data.y < EPSINON))
+	{
+		tmpData = m_maxTravData[istep];
+		// 右
+		if ((fabs(data.y) < OFFSET) && (data.x > tmpData.x) && (data.x > EPSINON)) {
+			m_maxTravData[istep] = data;
+			m_maxTravData[istep].y = 0;
+		}
+
+		// 右后
+		istep++;
+		tmpData = m_maxTravData[istep];
+		if ((fabs((sqrt(2.0) * (data.x + data.y)) / 2) < OFFSET) && ((data.x - data.y) / 2 > tmpData.x) && ((data.x - data.y) / 2 > EPSINON)) {
+			m_maxTravData[istep] = data;
+			m_maxTravData[istep].x = (data.x - data.y) / 2;
+			m_maxTravData[istep].y = (data.y - data.x) / 2;
+	   }
+
+	   // 后
+	   istep++;
+	   tmpData = m_maxTravData[istep];
+	   if ((fabs(data.x) < OFFSET) && (data.y < tmpData.y) && (data.y < EPSINON)) {
+		   m_maxTravData[istep] = data;
+		   m_maxTravData[istep].x = 0;
+	   }
+	}
+
+	istep = 4;
+	// 第三象限
+	if ((data.x < EPSINON) && (data.y < EPSINON))
+	{
+		tmpData = m_maxTravData[istep];
+		// 后
+		if ((fabs(data.x) < OFFSET) && (data.y < tmpData.y) && (data.y < EPSINON)) {
+			m_maxTravData[istep] = data;
+			m_maxTravData[istep].x = 0;
+		}
+
+		// 左后
+		istep++;
+		tmpData = m_maxTravData[istep];
+		if ((fabs((sqrt(2.0) * (data.x - data.y)) / 2) < OFFSET) && ((data.x + data.y) / 2 < tmpData.x) && ((data.x + data.y) / 2 < EPSINON)) {
+			m_maxTravData[istep] = data;
+			m_maxTravData[istep].x = (data.x + data.y) / 2;
+			m_maxTravData[istep].y = (data.x + data.y) / 2;
+	   }
+
+	   // 左
+	   istep++;
+	   tmpData = m_maxTravData[istep];
+	   if ((fabs(data.y) < OFFSET) && (data.x < tmpData.x) && (data.x < EPSINON)) {
+		   m_maxTravData[istep] = data;
+		   m_maxTravData[istep].y = 0;
+	   }
+	}
+
+	istep = 6;
+	// 第二象限
+	if ((data.x < EPSINON) && (data.y > EPSINON))
+	{
+		tmpData = m_maxTravData[istep];
+		// 左
+		if ((fabs(data.y) < OFFSET) && (data.x < tmpData.x) && (data.x < EPSINON)) {
+			m_maxTravData[istep] = data;
+			m_maxTravData[istep].y = 0;
+		}
+
+		// 左前
+		istep++;
+		tmpData = m_maxTravData[istep];
+		if ((fabs((sqrt(2.0) * (data.x + data.y)) / 2) < OFFSET) && ((data.x - data.y) / 2 < tmpData.x) && ((data.x - data.y) / 2 < EPSINON)) {
+			m_maxTravData[istep] = data;
+			m_maxTravData[istep].x = (data.x - data.y) / 2;
+			m_maxTravData[istep].y = (data.y - data.x) / 2;
+	   }
+
+	   tmpData = m_maxTravData[0];
+	   // 上
+	   if ((fabs(data.x) < OFFSET) && (data.y > tmpData.y) && (data.y > EPSINON)) {
+		   m_maxTravData[0] = data;
+		   m_maxTravData[0].x = 0;
+	   }
+	}
+}
+
+// 判断坐标点是否为同方向    
+bool IsSameDirection(const double & x1, const double& y1, const double& x2, const double& y2)
+{
+	const double EPSINON = 0.000001;
+	//判断点1和点2有没有在原点上的，这种情况不作判断，直接返回false
+	if (x1 < EPSINON && x1 > -EPSINON && y1 < EPSINON && y1 > -EPSINON)
+	{
+		return false;
+	}
+	if (x2 < EPSINON && x2 > -EPSINON && y2 < EPSINON && y2 > -EPSINON)
+	{
+		return false;
+	}
+
+	const double cos10degree = cos(10 * M_PI / 180);
+	const double cos8degree  = cos(8  * M_PI / 180);
+	const double cos15degree = cos(15 * M_PI / 180);
+	const double cos30degree = cos(30 * M_PI / 180);
+	const double cos45degree = cos(45 * M_PI / 180);
+
+	double cosTheta = (x1 * x2 + y1 * y2) / sqrt((x1 * x1 + y1 * y1) * (x2 * x2 + y2 * y2));
+
+	if (cosTheta > cos8degree)
+	{
+		return true;
+	}
+	else
+	{
+		return false;
+	}
+}
+
+std::string doubleToStringNoTrailingZeros(double value) 
+{
+	std::string str = std::to_string(value);
+	size_t pos;
+	while ((pos = str.find('.')) != std::string::npos && (str.back() == '0' || str.back() == '.')) {
+		str.pop_back();
+	}
+	return str;
+}
+
+// 在文件倒数四行插入数据
+void insertDataInLastFourLines(const std::string& filename, const double& b7, const double& b8, const double& b9, const double& b10) {
+	std::ifstream file(filename);
+	std::vector<std::string> lines;
+	std::string lastLine1, lastLine2, lastLine3, lastLine4;
+
+	std::string line;
+	while (std::getline(file, line)) {
+		if (!line.empty())
+		{
+			lines.push_back(line);
+		}
+	}
+
+	// 移除后四行
+	if (!lines.empty()) {
+		std::string backString = lines.back();
+		if (backString.length() >= 3 && backString.compare(0, 3, "b10") == 0)
+		{
+			lines.pop_back();
+		}
+	}
+
+	if (!lines.empty()) {
+		std::string backString = lines.back();
+		if (backString.length() >= 2 && backString.compare(0, 2, "b9") == 0)
+		{
+			lines.pop_back();
+		}
+	}
+
+	if (!lines.empty()) {
+		std::string backString = lines.back();
+		if (backString.length() >= 2 && backString.compare(0, 2, "b8") == 0)
+		{
+			lines.pop_back();
+		}
+	}
+
+	if (!lines.empty()) {
+		std::string backString = lines.back();
+		if (backString.length() >= 2 && backString.compare(0, 2, "b7") == 0)
+		{
+			lines.pop_back();
+		}
+	}
+
+	// 设置新行
+	if (b7 >= 0.000001 || b7 <= -0.000001)
+	{
+		lastLine4 += ("b7=" + doubleToStringNoTrailingZeros(b7));
+	}
+
+	if (b8 >= 0.000001 || b8 <= -0.000001)
+	{
+		lastLine3 += ("b8=" + doubleToStringNoTrailingZeros(b8));
+	}
+
+	if (b9 >= 0.000001 || b9 <= -0.000001)
+	{
+		lastLine2 += ("b9=" + doubleToStringNoTrailingZeros(b9));
+	}
+
+	if (b10 >= 0.000001 || b10 <= -0.000001)
+	{
+		lastLine1 += ("b10=" + doubleToStringNoTrailingZeros(b10));
+	}
+
+	// Write the modified lines to a new file
+	std::ofstream tempFile(filename + ".tmp");
+	for (const auto& line : lines) {
+		tempFile << line << "\n";
+	}
+	tempFile << lastLine4 << "\n" << lastLine3 << "\n" << lastLine2 << "\n" << lastLine1 << "\n"; // Write the new lines
+
+	tempFile.close();
+	file.close();
+
+	// Remove the original file
+	remove(filename.c_str());
+
+	// Rename the temporary file to the original filename
+	rename((filename + ".tmp").c_str(), filename.c_str());
+}
+
+int main(int argc, char *argv[])
+{
+    QApplication a(argc, argv);
+    QTextCodec::setCodecForLocale(QTextCodec::codecForName("system"));
+
+	LogHandler::Get().installMessageHandler();
+
+	qDebug() << "Hello";
+	qDebug() << "当前时间:" << QTime::currentTime().toString("hh:mm:ss");
+	qInfo() << QString("God bless you!");
+
+	//insertDataInLastFourLines(QString::fromUtf8("C:\\Users\\sjc\\Downloads\\站立底座传感器校准函数配置文件.txt").toLocal8Bit().toStdString(), 0.254, 0.7895,1.254,33);
+
+// 	char inbuf[1000] = "二小";
+// 	char* outbuf = new char[HZ2PY_OUTPUT_BUF_ARRAY_SIZE];
+// 	memset(outbuf, '\0', sizeof(char) * HZ2PY_OUTPUT_BUF_ARRAY_SIZE);
+// 	if (is_utf8_string(inbuf)) {
+// 		printf("utf8:");
+// 		pinyin_utf8(inbuf, outbuf);
+// 	}
+// 	else {
+// 		printf("gb2312:");
+// 		pinyin_gb2312(inbuf, outbuf, false, false, true, true, true);
+// 	}
+// 	printf("%s\n", outbuf);
+// 	getchar();
+// 	delete outbuf;
+
+
+    //std::string zh = "二1小shRG小2黄4--";
+
+    //std::string enwen = NameChange::GetInstance()->ZhToPY(zh);
+
+
+// 	for (int i = 0;i<100000;i++)
+// 	{
+// 		//bool ret = IsSameDirection(1.0,0.0,1.555,0.0);
+// 		qDebug() << "当前时间:" << QTime::currentTime().toString("hh:mm:ss");
+// 	}
+// 
+// 	int a1 = 10;
+// 	const int* p = &a1;
+// 	int* q;
+// 	q = const_cast<int*>(p);
+// 	*q = 20;    //fine
+// 	qDebug() << a1  << " " << *p << " " << *q << endl;
+// 	qDebug() << &a1 << " " << p  << " " << q  << endl;
+
+	SphereBalanceTool w;
+	w.show();
+
+    return a.exec();
+}

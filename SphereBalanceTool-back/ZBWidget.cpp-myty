@@ -1,0 +1,318 @@
+#include "ZBWidget.h"
+#include "commonDefine.h"
+
+ZBWidget::ZBWidget(QWidget* parent /*= nullptr*/)
+{
+	this->setFixedSize(603, 742);
+}
+
+ZBWidget::~ZBWidget()
+{
+
+}
+
+int ZBWidget::TargetMovingCal(int moveTotalDist, int speed, time_t timeDifference)
+{
+	int moveValue = 0;
+	double pxPerMsec = (double)moveTotalDist / (speed * 1000);
+	int mo = int(timeDifference * pxPerMsec) % (int)(moveTotalDist / 2);
+
+	if ((int(timeDifference * pxPerMsec) / (int)(moveTotalDist / 2)) % 4 == 0)
+	{
+		moveValue = mo;
+	}
+	else if ((int(timeDifference * pxPerMsec) / (int)(moveTotalDist / 2)) % 4 == 1)
+	{
+		moveValue = (moveTotalDist / 2) - mo;
+	}
+	else if ((int(timeDifference * pxPerMsec) / (int)(moveTotalDist / 2)) % 4 == 2)
+	{
+		moveValue = 0 - mo;
+	}
+	else if ((int(timeDifference * pxPerMsec) / (int)(moveTotalDist / 2)) % 4 == 3)
+	{
+		moveValue = mo -(moveTotalDist / 2);
+	}
+	return moveValue;
+}
+bool  FocusCoordTrans2(S_CoordInfo& coordInfo)
+{
+	//坐标换算,需要取浮点数
+	// 取比例
+	double xRatio = 0;
+	double yRatio = 0;
+
+	xRatio = coordInfo.imageWidth / coordInfo.xRatio;
+	yRatio = coordInfo.imageHeight / coordInfo.yRatio;
+
+	// 算出基于数学坐标系的x和y值
+	double x = coordInfo.dataX * xRatio;
+	double y = coordInfo.dataY * yRatio;
+
+	// 屏幕坐标换算, 需要换算到相对于圆心的位置
+	coordInfo.dstX = (coordInfo.imageWidth) / 2.0 + x;
+	coordInfo.dstY = (coordInfo.imageHeight) * 0.64 - y;
+
+	return true;
+}
+
+TPoint FindCentroid(std::vector<TPoint> points)
+{
+	double x = 0;
+	double y = 0;
+
+	std::vector<TPoint>::iterator iter1;
+	for (iter1 = points.begin(); iter1 != points.end(); iter1++) {
+		x += (*iter1).x;
+		y += (*iter1).y;
+	}
+
+	TPoint center;
+	center.x = 0;
+	center.y = 0;
+	if (points.size() <= 0) {
+		return center;
+	}
+	center.x = (int)x / points.size();
+	center.y = (int)y / points.size();
+	return center;
+
+}
+
+// 排序
+bool Compare(const TPoint& point1, const TPoint& point2)
+{
+	// get centroid
+//	float x1 = point1.x - m_center.x;
+//	float y1 = point1.y - m_center.y;
+//	double a1 = int(ToDegrees(atan2(x1, y1) + 360)) % 360;
+
+//	x1 = point2.x - m_center.x;
+//	y1 = point2.y - m_center.y;
+//	double a2 = int(ToDegrees(atan2(x1, y1) + 360)) % 360;
+
+//	return (a1 < a2);
+	return true;
+}
+
+// 点数对比
+bool PointCmp(const TPoint& a, const TPoint& b, const TPoint& center)
+{
+	if (a.x >= 0 && b.x < 0)
+		return true;
+	if (a.x == 0 && b.x == 0)
+		return a.y > b.y;
+	//向量OA和向量OB的叉积
+	int det = (a.x - center.x) * (b.y - center.y) - (b.x - center.x) * (a.y - center.y);
+	if (det < 0)
+		return true;
+	if (det > 0)
+		return false;
+	//向量OA和向量OB共线，以距离判断大小
+	int d1 = (a.x - center.x) * (a.x - center.x) + (a.y - center.y) * (a.y - center.y);
+	int d2 = (b.x - center.x) * (b.x - center.y) + (b.y - center.y) * (b.y - center.y);
+	return d1 > d2;
+}
+
+
+
+// 多边形坐标排序
+// 1）获得质心坐标2）计算两点之间的度数，根据度数对点进行排序
+std::vector<TPoint> SortVerticies(std::vector<TPoint> points)
+{
+	//m_center = FindCentroid(points);
+
+	//std::sort(points.begin(), points.end(),Compare);
+   //冒泡排序
+	for (int i = 0; i < points.size() - 1; i++) {
+		for (int j = 0; j < points.size() - i - 1; j++)
+		{
+			//if (PointCmp(points[j], points[j + 1], m_center))
+			{
+				TPoint tmp = points[j];
+				points[j] = points[j + 1];
+				points[j + 1] = tmp;
+			}
+		}
+	}
+	return points;
+}
+
+void ZBWidget::paintEvent(QPaintEvent* event)
+{
+	QWidget::paintEvent(event);
+
+	QPainter painter(this);
+	QPixmap pixmap(":/SphereBalanceTool/res/zbz.png");
+	painter.drawPixmap(0, 0, pixmap);
+
+
+	//WRITE_LOG("StandardTrainPagePaint::DrawPolygon");
+
+	std::vector<S_RawCoord> dataList;
+// x: 0, y : 6.88
+// x : 4.795, y : 4.795
+// x : 8.17, y : 0
+// x : 4.41, y : -4.41
+// x : 0, y : -2.69
+// x : -5.005, y : -5.005
+// x : -8.98, y : 0
+// x : -3.975, y : 3.975
+	S_RawCoord tmp1;
+	tmp1.x = 0;
+	tmp1.y = 6.88;
+	S_RawCoord tmp2;
+	tmp2.x = 4.795;
+	tmp2.y = 4.795;
+	S_RawCoord tmp3;
+	tmp3.x = 8.17;
+	tmp3.y = 0;
+	S_RawCoord tmp4;
+	tmp4.x = 4.41;
+	tmp4.y = -4.41;
+	S_RawCoord tmp5;
+	tmp5.x = 0;
+	tmp5.y = -2.69;
+	S_RawCoord tmp6;
+	tmp6.x = -5.005;
+	tmp6.y = -5.005;
+	S_RawCoord tmp7;
+	tmp7.x = -8.98;
+	tmp7.y = 0;
+	S_RawCoord tmp8;
+	tmp8.x = -3.975;
+	tmp8.y = 3.975;
+	dataList.push_back(tmp1);
+	dataList.push_back(tmp2);
+	dataList.push_back(tmp3);
+	dataList.push_back(tmp4);
+	dataList.push_back(tmp5);
+	dataList.push_back(tmp6);
+	dataList.push_back(tmp7);
+	dataList.push_back(tmp8);
+
+
+
+
+	// 设置坐标换算的输入数据
+	S_CoordInfo tmpCoordInfo;
+
+	tmpCoordInfo.imageWidth = 603;
+	tmpCoordInfo.imageHeight = 472;
+	tmpCoordInfo.imageLeft = 0;
+	tmpCoordInfo.imageTop = 0;
+	// 站姿
+	{
+		tmpCoordInfo.xRatio = 16;
+		tmpCoordInfo.yRatio = 12.5;
+	}
+
+
+	std::vector<TPoint> pointVec;
+
+	for (int i = 0; i < dataList.size(); i++) {
+		tmpCoordInfo.dataX = dataList[i].x;
+		tmpCoordInfo.dataY = dataList[i].y;
+
+		if (tmpCoordInfo.dataX > 8) {
+			tmpCoordInfo.dataX = 8;
+		}
+
+		if (tmpCoordInfo.dataX < -8) {
+			tmpCoordInfo.dataX = -8;
+		}
+
+		if (tmpCoordInfo.dataY > 8) {
+			tmpCoordInfo.dataY = 8;
+		}
+
+		if (tmpCoordInfo.dataY < -4.5) {
+			tmpCoordInfo.dataY = -4.5;
+		}
+
+		// 过滤掉不符合要求的点
+		if (dataList[i].x == 0 && dataList[i].y == 0) {
+			continue;
+		}
+		// 过滤
+		bool ret1 = FocusCoordTrans2(tmpCoordInfo);
+		if (!ret1) {
+			continue;
+		}
+
+		int x1 = tmpCoordInfo.dstX;
+		int y1 = tmpCoordInfo.dstY;
+
+
+		if (x1 < 0) {
+			x1 = 0;
+		}
+		else if (x1 > tmpCoordInfo.imageWidth) {
+			x1 = tmpCoordInfo.imageWidth;
+		}
+
+		if (y1 < 0) {
+			y1 = 0;
+		}
+		else if (y1 > tmpCoordInfo.imageHeight) {
+			y1 = tmpCoordInfo.imageHeight;
+		}
+
+
+
+
+		TPoint singlePoint;
+		singlePoint.x = x1;
+		singlePoint.y = y1;
+
+		// 过滤掉重复数据
+		bool hasFind = false;
+		for (int j = 0; j < pointVec.size(); j++) {
+			if ((pointVec[j].x == singlePoint.x) &&
+				(pointVec[j].y == singlePoint.y)) {
+				hasFind = true;
+			}
+		}
+
+		if (!hasFind) {
+			pointVec.push_back(singlePoint);
+		}
+
+	}
+
+
+	int cnt = pointVec.size();
+	if (cnt == 0) {
+		return;
+	}
+
+// 	TPoint* tmpPoint = new TPoint[cnt];
+// 	if (tmpPoint == NULL) {
+// 		return;
+// 	}
+
+	// 对多边形坐标排序
+// 	std::vector<TPoint> tmpPointVec = SortVerticies(pointVec);
+// 
+// 	for (int i = 0; i < cnt; i++) {
+// 		tmpPoint[i] = tmpPointVec[i];
+// 	}
+
+	QPolygonF polygon;
+	for (int i = 0; i < cnt; i++) {
+		polygon << QPointF(pointVec[i].x, pointVec[i].y);
+	}
+
+	// 定义多边形的顶点
+	//polygon << QPoint(20, 20) << QPoint(120, 20) << QPoint(120, 120) << QPoint(20, 120);
+
+	// 开始绘制
+	painter.begin(this);
+	painter.setBrush(Qt::blue); // 设置填充颜色为蓝色
+	painter.drawPolygon(polygon); // 绘制多边形
+	painter.end();
+
+
+
+	
+}
